@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evaluedu.elmer-yale99-torrez.chatgpt.site/schemas/edueval-content-v1.json",
+  "title": "EvaluEdu structured content v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "content"],
+  "properties": {
+    "schema": { "const": "edueval.content" },
+    "version": { "const": 1 },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "subject", "description", "objective", "competency", "difficulty", "concepts", "situations", "processSteps", "categories"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 1500 },
+        "objective": { "type": "string", "minLength": 1, "maxLength": 1200 },
+        "competency": { "type": "string", "maxLength": 1200 },
+        "difficulty": { "enum": ["Inicial", "Intermedio", "Avanzado"] },
+        "concepts": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "definition"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 180 },
+              "definition": { "type": "string", "minLength": 1, "maxLength": 1200 },
+              "example": { "type": "string", "maxLength": 600 }
+            }
+          }
+        },
+        "situations": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "context", "decision", "consequence"],
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+              "context": { "type": "string", "minLength": 1, "maxLength": 1500 },
+              "decision": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "consequence": { "type": "string", "minLength": 1, "maxLength": 1000 }
+            }
+          }
+        },
+        "processSteps": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+        "categories": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
+      }
+    }
+  }
+}
