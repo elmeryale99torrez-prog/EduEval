@@ -1,14 +1,17 @@
-const VERSION = 'edueval-shell-v2'
-const SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icon.svg',
-  '/icon-maskable.svg',
-]
+const VERSION = 'edueval-shell-v4'
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()))
+  const base = self.registration.scope
+  const shell = [
+    base,
+    `${base}index.html`,
+    `${base}manifest.webmanifest`,
+    `${base}icon.svg`,
+    `${base}icon-maskable.svg`,
+  ]
+  event.waitUntil(
+    caches.open(VERSION).then((cache) => cache.addAll(shell)).then(() => self.skipWaiting()),
+  )
 })
 
 self.addEventListener('activate', (event) => {
@@ -23,17 +26,19 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return
 
   const url = new URL(request.url)
-  if (url.origin !== self.location.origin || url.pathname.startsWith('/rest/') || url.pathname.startsWith('/auth/') || url.pathname.startsWith('/functions/')) return
+  if (url.origin !== self.location.origin || url.pathname.includes('/rest/') || url.pathname.includes('/auth/') || url.pathname.includes('/functions/')) return
 
   if (request.mode === 'navigate') {
+    const base = self.registration.scope
+    const indexUrl = `${base}index.html`
     event.respondWith(
       fetch(request)
         .then((response) => {
           const copy = response.clone()
-          void caches.open(VERSION).then((cache) => cache.put('/index.html', copy))
+          void caches.open(VERSION).then((cache) => cache.put(indexUrl, copy))
           return response
         })
-        .catch(() => caches.match('/index.html')),
+        .catch(() => caches.match(indexUrl)),
     )
     return
   }

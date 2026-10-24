@@ -183,6 +183,9 @@ body{margin:0;min-width:320px;background:var(--bg-app);color:var(--ink);transiti
   top:22px;
   right:24px;
   z-index:10;
+  display:flex;
+  align-items:center;
+  gap:10px;
 }
 
 /* Modificaciones de componentes para soporte Dark y Warm */

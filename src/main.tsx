@@ -11,7 +11,8 @@ createRoot(document.getElementById('root')!).render(
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    void navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+    const swUrl = `${import.meta.env.BASE_URL}sw.js`
+    void navigator.serviceWorker.register(swUrl).catch((error: unknown) => {
       console.warn('No se pudo registrar el service worker de EvaluEdu.', error)
     })
   })

@@ -1278,7 +1278,15 @@ function App() {
   if (isSupabaseConfigured && hasChosenRole && role !== 'student' && authSession && authProfile && !canAccessPanel(authProfile, role)) return <RoleMismatchScreen selectedRole={role} actualRole={authProfile.role} onUseActualRole={() => { setRole(authProfile.role); show('overview') }} onBack={signOut} />
   if (isSupabaseConfigured && hasChosenRole && role === 'teacher' && authSession && !authProfile) return <ProfileSetupScreen user={authSession.user} onBack={signOut} onCreated={setAuthProfile} />
   if (isSupabaseConfigured && hasChosenRole && role === 'admin' && authSession && !authProfile) return <ProfileUnavailableScreen email={authSession.user.email ?? ''} onBack={signOut} />
-  return !hasChosenRole ? <RoleLanding onChoose={changeRole} theme={theme} onToggleTheme={toggleTheme} /> : <div className="app-shell">
+  return !hasChosenRole ? (
+    <RoleLanding
+      onChoose={changeRole}
+      theme={theme}
+      onToggleTheme={toggleTheme}
+      canInstall={Boolean(installPrompt)}
+      onInstall={() => void installApp()}
+    />
+  ) : <div className="app-shell">
     <header className="topbar">
       <button className="brand" onClick={() => show('overview')} aria-label="Ir al inicio"><span className="brand-mark">E</span><span><strong>EvaluEdu</strong><small>aprendizaje activo</small></span></button>
        <div className="topbar-actions"><span className={`connection-pill ${backendReady ? 'ready' : ''} ${!isOnline ? 'offline' : ''} ${syncQueue.length ? 'pending' : ''}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{syncLabel}</span>{syncQueue.length > 0 && isOnline && <button className="sync-button" type="button" onClick={() => void flushSyncQueue()} disabled={syncing}>{syncing ? '↻' : '↻ Sincronizar'}</button>}{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
@@ -1295,10 +1303,27 @@ function App() {
   </div>
 }
 
-function RoleLanding({ onChoose, theme, onToggleTheme }: { onChoose: (role: Role) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
+function RoleLanding({
+  onChoose,
+  theme,
+  onToggleTheme,
+  canInstall,
+  onInstall,
+}: {
+  onChoose: (role: Role) => void
+  theme: 'light' | 'dark'
+  onToggleTheme: () => void
+  canInstall?: boolean
+  onInstall?: () => void
+}) {
   return (
     <div className="role-landing">
       <div className="landing-top-actions">
+        {canInstall && onInstall && (
+          <button className="install-button" type="button" onClick={onInstall}>
+            ＋ Instalar app
+          </button>
+        )}
         <button
           className="theme-toggle-btn"
           type="button"
