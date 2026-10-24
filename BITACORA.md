@@ -526,3 +526,133 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
 - Verificación: `npm run test` 25/25 (3 archivos) y `npm run build` correcto.
 - Reversión: borrar los dos archivos nuevos y restaurar `BITACORA.md.bak`.
 - Pendiente: autorizar la integración en editor docente, vista del estudiante y exportación; luego continuar con las otras cinco actividades.
+
+### Integración de Falso/verdadero v1.2 en la aplicación local · 2026-10-24
+
+- Se instaló `MinGit v2.56.0.3` y se creó el punto de retorno en Git (`commit 9777d6c`) además de respaldos locales (`src/App.tsx.bak` y `BITACORA.md.bak`) para permitir reversión inmediata si el usuario lo solicita.
+- Se integró el contrato v1.2 de Falso/verdadero (`src/lib/activities/trueFalse.ts`) en:
+  1. Motor común (`src/lib/activityEngine.ts`): soporte de `context` y `hint` en `details.trueFalse`, rechazo de comparación cruzada de tipos para `trueFalse` y tratamiento de respuesta vacía como `omitted` (nunca como `"Falso"`).
+  2. Editor docente (`TrueFalseEditor` en `src/App.tsx`): campos para contexto opcional, afirmación obligatoria, selector de clave esperada sin valor predeterminado (`— Elige la clave —`), pista orientadora pública (`hint`) y explicación privada (`explanation`), validados mediante `validateTrueFalseDefinition`.
+  3. Vista del estudiante (`PlayView` en `src/App.tsx`): visualización del contexto opcional antes de la afirmación y entrega exclusiva de la pista orientadora (`hint`) tras confirmar la respuesta, sin exponer la explicación privada ni la clave.
+  4. Vista docente de resultados (`ResultsView`) y exportación CSV (`exportCsv` en `src/App.tsx`): inclusión de la explicación privada y de la pista entregada para las respuestas de Falso/verdadero.
+- Se agregó `src/lib/activities/trueFalseIntegration.test.ts` (3 pruebas de integración con el motor común).
+- Verificación ejecutada: `npm run test` aprobó 28/28 pruebas (4 archivos) y `npm run build` compiló sin errores (`tsc -b && vite build`).
+
+### Nivelación de la interfaz local con la publicación pública v13 · 2026-10-24
+
+- El usuario solicitó activar la conexión local a Supabase y traer a esta copia local los 4 bloques de interfaz presentes en la versión pública v13 (`https://evaluedu.elmer-yale99-torrez.chatgpt.site/`).
+- Se creó `.env.local` (excluido de Git) con `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY` públicas del proyecto Supabase de EvaluEdu.
+- Se integraron en `src/App.tsx` y `src/index.css` los 4 bloques de v13 conservando intactos el importador JSON (`edueval.content` v1) y las mejoras del contrato v1.2 de Falso/verdadero:
+  1. **Opciones de cuenta en barra lateral (`.sidebar-account-actions`) y cabecera `.role-label`:** botones directos de `🔑 Cambiar contraseña` y `↪ Cerrar sesión` en el pie de la barra lateral y correo de la sesión activa bajo el título del panel.
+  2. **Centro de Ayuda (`HelpModal`):** tarjeta interactiva `¿Necesitas ayuda?` que abre la guía rápida de 4 pasos y el espacio para el video tutorial.
+  3. **Contacto Docente (`FeedbackModal`):** botón `✎ Escribir sugerencia` en el panel docente con formulario que prepara el envío hacia `elmeryaletorrez@gmail.com`.
+  4. **Acceso Piloto en Administración (`AdminUsersView` y `AuthScreen`):** selector entre `Acceso piloto` (con contraseña temporal e invocación de `admin-create-pilot-teacher`) e `Invitar por correo`.
+- Se simplificó el manejo de `Dificultad` por decisión del docente: se retiró el selector de niveles de dificultad de los formularios (`TemplateBuilder` y `ActivityForm`) y de las tarjetas/vistas previas para no complicar el desarrollo de las actividades. Internamente se mantiene `'Intermedio'` por defecto para conservar compatibilidad con el esquema de Supabase y en el validador JSON (`validateContentDocument`) pasó a ser opcional con valor por defecto `'Intermedio'`.
+- Verificación ejecutada: `npm run test` (29/29 pruebas aprobadas) y `npm run build` exitoso.
+
+### Etapa 2 · Contrato modular e integración de Selección única (`singleChoice`) + Orden de actividades de fácil a difícil · 2026-10-24
+
+- Por indicación del docente, se reordenaron las seis actividades en toda la interfaz, motor, matriz de compatibilidad y generador de plantillas desde la más sencilla hasta la más compleja:
+  1. `trueFalse` (`Falso / verdadero`)
+  2. `singleChoice` (`Selección múltiple`)
+  3. `matching` (`Asociación`)
+  4. `sorting` (`Clasificación`)
+  5. `ordering` (`Ordenamiento`)
+  6. `scenario` (`Escenario de decisiones`)
+- Se creó el contrato modular independiente de Selección única en `src/lib/activities/singleChoice.ts` con sus pruebas unitarias (`src/lib/activities/singleChoice.test.ts`, 10 pruebas) y de integración (`src/lib/activities/singleChoiceIntegration.test.ts`, 3 pruebas):
+  - Valida enunciado obligatorio (`prompt`), pista orientadora pública obligatoria (`hint`), contexto opcional (`context`), explicación privada opcional (`explanation`), entre 2 y 6 opciones con texto no vacío, sin opciones duplicadas (normalizando espacios y mayúsculas/minúsculas) y **exactamente una opción marcada como correcta** (`correct: true`).
+  - La proyección pública (`toSingleChoicePublic`) entrega solo `{ id, label }` en cada opción, sin exponer `correct`, `explanation` ni `hint`.
+  - La evaluación (`evaluateSingleChoice`) distingue respuestas confirmadas (`correct` / `incorrect`), omitidas (`omitted`, 0 puntos, `correct: null`) y tiempo agotado sin confirmar (`timeout`, conserva la opción marcada como evidencia sin puntuar), y rechaza respuestas de otro tipo o con opciones inexistentes.
+- Se integró `singleChoice` v1.2 en `src/lib/activityEngine.ts` y `src/App.tsx`:
+  - En `SingleChoiceEditor` ninguna opción aparece marcada como correcta por defecto al crear una actividad manual (`correct: false` en todas las opciones iniciales), obligando al docente a elegir explícitamente la clave y a escribir la pista orientadora.
+  - En `PlayView` el estudiante ve el contexto opcional (`context`) si existe y tras confirmar recibe la pista orientadora (`hint`).
+  - En `ResultsView` y en la exportación CSV (`exportCsv`) el docente visualiza la pista entregada y la explicación privada de `singleChoice`.
+- Verificación ejecutada: `npm run test` aprobó **42/42 pruebas** (6 archivos de prueba) y `npm run build` (`tsc -b && vite build`) compiló sin errores.
+
+### Etapa 3 · Contrato modular e integración de Asociación (`matching`) con tablero de enlace por columnas · 2026-10-24
+
+- Por decisión del docente, la interacción del estudiante en **Asociación (`matching`)** se diseñó con un **tablero visual de enlace tocando columnas** (columna izquierda de conceptos y columna derecha de definiciones/relaciones barajadas determinísticamente) en lugar de un menú desplegable `<select>`, manteniendo paridad entre móvil (Android) y computadora.
+- Se creó el contrato modular independiente de Asociación en `src/lib/activities/matching.ts` con sus pruebas unitarias (`src/lib/activities/matching.test.ts`, 9 pruebas) y de integración (`src/lib/activities/matchingIntegration.test.ts`, 3 pruebas):
+  - Valida enunciado obligatorio (`prompt`), pista orientadora pública obligatoria (`hint`), contexto opcional (`context`), explicación privada opcional (`explanation`) y entre 2 y 6 pares (`pairs`) con textos de concepto (`left`) y relación (`right`) no vacíos y sin conceptos ni relaciones duplicadas.
+  - La proyección pública (`toMatchingPublic`) entrega `leftItems` y `rightOptions` desordenados mediante `scrambleRightOptions` sin revelar qué par corresponde a cuál ni exponer `explanation` o `hint`.
+  - La evaluación (`evaluateMatching`) exige el 100 % de los pares correctamente enlazados para otorgar el puntaje (todo o nada en v1.2, o `omitted` si no se enlazó ningún par), y rechaza respuestas con relaciones repetidas (garantizando relación biunívoca 1 a 1) o conceptos/relaciones inexistentes.
+- Se integró `matching` v1.2 en `src/lib/activityEngine.ts`, `src/App.tsx` y `src/index.css`:
+  - `MatchingEditor` incluye campo de contexto opcional, pares, pista orientadora obligatoria (`hint`) y explicación privada (`explanation`), validados con `validateMatchingDefinition`.
+  - `MatchingQuestion` permite tocar un concepto a la izquierda (`A`, `B`, `C`...) y tocar su relación a la derecha para enlazarlos con insignias del mismo color y letra (`.matching-badge.pair-tone-1`..`6`), además de un botón `×` para desenlazar cualquier par antes de confirmar.
+  - En `PlayView`, `ResultsView` y exportación CSV (`exportCsv`) se muestran el contexto, la pista orientadora y la explicación docente de `matching`.
+- Verificación ejecutada: `npm run test` aprobó **54/54 pruebas** (8 archivos de prueba) y `npm run build` (`tsc -b && vite build`) compiló sin errores.
+
+### Etapa 4 · Contrato modular e integración de Clasificación (`sorting`) con banco desordenado y arrastrar/tocar · 2026-10-24
+
+- Se creó el contrato modular independiente de Clasificación en `src/lib/activities/sorting.ts` con sus pruebas unitarias (`src/lib/activities/sorting.test.ts`, 9 pruebas) y de integración (`src/lib/activities/sortingIntegration.test.ts`, 3 pruebas):
+  - Valida enunciado obligatorio (`prompt`), pista orientadora pública obligatoria (`hint`), contexto opcional (`context`), explicación privada opcional (`explanation`), entre 2 y 6 categorías únicas (`categories`) y entre 2 y 12 elementos únicos (`items`) distribuidos en **al menos dos categorías distintas** para garantizar clasificación real.
+  - La proyección pública (`toSortingPublic`) entrega las categorías y los elementos desordenados mediante `scrambleSortingItems`, ocultando la categoría correcta de cada elemento, la pista y la explicación privada.
+  - La evaluación (`evaluateSorting`) verifica que el 100 % de los elementos estén asignados a su categoría correcta para otorgar el puntaje (todo o nada en v1.2, o `omitted` si no se clasificó ningún elemento), conserva asignaciones parciales por tiempo agotado (`timeout`) y rechaza elementos o categorías inexistentes.
+- Se integró `sorting` v1.2 en `src/lib/activityEngine.ts`, `src/App.tsx` y `src/index.css`:
+  - `SortingEditor` incluye campo de contexto opcional, categorías con botón de eliminación seguro, elementos, pista orientadora obligatoria (`hint`) y explicación privada (`explanation`), validados con `validateSortingDefinition`.
+  - `SortingQuestion` desordena automáticamente las tarjetas del banco superior y permite tanto **arrastrar y soltar (drag & drop)** en computadora como **tocar tarjeta y tocar contenedor de categoría** (además de botón `×` en cada elemento clasificado para devolverlo al banco y selector de apoyo en móvil).
+  - En `PlayView`, `ResultsView` y exportación CSV (`exportCsv`) se muestran el contexto, la pista orientadora y la explicación docente de `sorting`.
+- Verificación ejecutada: `npm run test` aprobó **66/66 pruebas** (10 archivos de prueba) y `npm run build` (`tsc -b && vite build`) compiló sin errores.
+
+### Etapa 5 · Contrato modular e integración de Ordenamiento (`ordering`) con desorden garantizado y doble interacción · 2026-10-24
+
+- Se resolvió el diagnóstico `F16` y `F17` donde el ordenamiento aleatorio previo podía entregar los pasos ya resueltos de forma casual. Se creó el contrato modular independiente en `src/lib/activities/ordering.ts` con sus pruebas unitarias (`src/lib/activities/ordering.test.ts`, 9 pruebas) y de integración (`src/lib/activities/orderingIntegration.test.ts`, 3 pruebas):
+  - Valida enunciado obligatorio (`prompt`), pista orientadora pública obligatoria (`hint`), contexto opcional (`context`), explicación privada opcional (`explanation`) y entre 3 y 8 pasos únicos (`steps`) con texto no vacío ni marcadores vacíos.
+  - La función determinista `scrambleOrderingSteps` garantiza que la secuencia inicial entregada al estudiante **nunca sea idéntica a la clave correcta**.
+  - La proyección pública (`toOrderingPublic`) oculta la clave original, la pista y la explicación privada.
+  - La evaluación (`evaluateOrdering`) verifica la secuencia exacta posición por posición para otorgar el puntaje (100% de coincidencias en v1.2 o 0 puntos si falla alguna posición), registra omisiones (`omitted`, 0 puntos, `correct: null`), conserva orden parcial en tiempo agotado (`timeout`) y rechaza secuencias con pasos repetidos o ajenos.
+- Se integró `ordering` v1.2 en `src/lib/activityEngine.ts`, `src/App.tsx` y `src/index.css`:
+  - `OrderingEditor` incluye campo de contexto opcional, pasos con botones de reordenamiento rápido (`↑` / `↓`), eliminación segura hasta el mínimo permitido, pista orientadora obligatoria (`hint`) y explicación privada (`explanation`), validados con `validateOrderingDefinition`.
+  - `OrderingQuestion` inicializa la secuencia con desorden determinista garantizado y permite tanto **arrastrar y soltar filas (drag & drop)** como **reordenar con botones `↑` / `↓`** para máxima accesibilidad y fluidez en móvil (Android) y computadora.
+  - En `PlayView`, `ResultsView` y exportación CSV (`exportCsv`) se muestran el contexto, la pista orientadora y la explicación docente de `ordering`.
+- Verificación ejecutada: `npm run test` aprobó **78/78 pruebas** (12 archivos de prueba) y `npm run build` (`tsc -b && vite build`) compiló sin errores.
+
+### Etapa 6 · Contrato modular e integración de Escenario de decisiones (`scenario`) y cierre de las 6 actividades v1.2 · 2026-10-24
+
+- Se completó la actividad de mayor rigor formativo: **Escenario de decisiones (`scenario`)**, tomando como referencia pedagógica la app de decisiones compartida por el docente (`https://ecoliderazgo-movil.elmer-yale99-torrez.chatgpt.site`), adaptada para bachillerato en adelante sin requerir imágenes.
+- Se creó el contrato modular independiente en `src/lib/activities/scenario.ts` con sus pruebas unitarias (`src/lib/activities/scenario.test.ts`, 8 pruebas) y de integración (`src/lib/activities/scenarioIntegration.test.ts`, 3 pruebas):
+  - Define límites pedagógicos rigurosos en `SCENARIO_LIMITS` (de 1 a 4 etapas, de 2 a 4 opciones por etapa, situación contextual obligatoria y textos claros).
+  - `validateScenarioDefinition`: valida que exista un planteamiento de dilema o situación (`situation`), etapas secuenciadas con consigna (`prompt`), opciones no vacías con consecuencia reflexiva (`consequence`) y orientación formativa (`feedback`), y **exactamente una opción recomendada por etapa** (`recommended: true`).
+  - `toScenarioPublic`: proyecta la estructura pública segura eliminando los campos `recommended`, `consequence` y `feedback` antes del envío al estudiante, impidiendo que la clave se filtre.
+  - `validateScenarioResponse` y `evaluateScenario`: evalúa las decisiones tomadas por etapa contra las opciones recomendadas, calcula puntaje formativo privado, conserva consecuencias reflexivas correspondientes a las elecciones del alumno para su retroalimentación y gestiona estados de omisión (`omitted`) y tiempo parcial (`timeout`).
+  - `formatScenarioReport`: genera el desglose de decisiones, consecuencias y pistas para el informe de resultados del docente.
+- Se integró `scenario` v1.2 en `src/lib/activityEngine.ts`, `src/App.tsx` y `src/index.css`:
+  - `ScenarioEditor`: editor docente completo con adición y eliminación controlada de etapas y alternativas, marcación explícita de la alternativa recomendada, redacción de consecuencias reflexivas por decisión, pista orientadora general (`hint`) y justificación privada (`explanation`).
+  - `ScenarioQuestion`: interfaz de evaluación inmersiva con recuadro destacado de dilema/situación (`📋 Contexto del dilema / Situación`), barra de progreso de etapas decididas, tarjetas de etapas numeradas y tarjetas de opciones táctiles que despliegan la consecuencia reflexiva de la decisión tomada (`⚡ Consecuencia de tu decisión:`).
+  - En `PlayView`, `ResultsView` y exportación CSV (`exportCsv`) se incluyen las pistas, consecuencias y explicaciones de `scenario`.
+- Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 archivos de prueba) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores.
+- **Hito v1.2 completado:** Las **seis actividades oficiales** de EduEval (`trueFalse`, `singleChoice`, `matching`, `sorting`, `ordering`, `scenario`) cuentan con sus contratos modulares independientes, pruebas unitarias y de integración, editores docentes específicos, vistas estudiantiles responsive con accesibilidad táctil/computadora y retroalimentación formativa sin ranking.
+
+### Etapa 7 · Rediseño Warm Modernist, tipografía oficial y sistema de temas Día / Noche · 2026-10-24
+
+- Con la aprobación expresa del docente, se realizó la modernización visual y ergonómica de la interfaz, dejando atrás el aspecto genérico y anticuado para adoptar un estilo de alta gama (*Warm Modernist / Soft UI*):
+  - **Tipografía oficial:** Se integró la fuente Google Fonts `Plus Jakarta Sans` (pesos 400 a 800) en `index.html` con precarga (`preconnect`) y `font-display: swap`, sustituyendo las fuentes del sistema y la serif tradicional por una tipografía sans-serif geométrica de máxima legibilidad.
+  - **Sistema de temas dual (Modo Día / Modo Noche):**
+    - **Modo Día:** Diseñado para alta visibilidad contra el reflejo del sol en exteriores y aulas iluminadas, con fondo marfil luminoso (`#F7F9F8`), textos en verde petróleo profundo (`#14352F`) con ratio de contraste accesible > 10:1 (eliminando grises lavados ilegibles) y tarjetas blancas nítidas.
+    - **Modo Noche:** Diseñado para estudio nocturno sin fatiga visual ni deslumbramiento, con fondo petróleo oscuro antirreflejo (`#0D1D21`) en lugar de negro puro `#000000` (evitando efecto halo en pantallas OLED/LCD), superficies suaves en `#152F36` y textos en blanco marfil no hiriente (`#E6F0EB`).
+    - **Acento cálido:** Naranja/ámbar melocotón (`#F8A452`) como punto focal compartido para botones principales y estados activos.
+  - **Botón conmutador ☀️ / 🌙 en esquina superior derecha:**
+    - Se reemplazó el avatar estático e inerte ("EL" / "LM") en `topbar-actions` por un botón compacto de alternancia rápida de tema.
+    - Se incorporó también en la esquina superior de la pantalla inicial de selección de rol (`RoleLanding`).
+    - Guarda y recuerda automáticamente la elección del usuario en `localStorage` (`evaluedu-theme`).
+  - **Geometría y componentes táctiles:**
+    - Esquinas redondeadas amplias y amigables (`border-radius: 16px - 20px`) en tarjetas de las 6 actividades, paneles y métricas docentes.
+    - Botones de acción en cápsula (*pill-buttons*, `border-radius: 9999px`) con micro-presión física bajo el dedo (`transform: scale(0.97)` en `@media (hover: none)`), eliminando el molesto *sticky hover* de celulares.
+    - Tarjeta de dilema y contexto en verde petróleo profundo con títulos en acento ámbar.
+  - **Afinación radical y modernización integral:**
+    - **Erradicación de tipografía anticuada:** Se eliminaron las 25+ referencias a `'Playfair Display'` que quedaban en selectores específicos de títulos, unificando todo el sistema bajo `Plus Jakarta Sans` con peso 700/800 y tracking ajustado (`-0.02em`).
+    - **Conjunto de iconos vectoriales SVG:** Se creó `src/lib/icons.tsx` con componentes SVG vectoriales limpios (reemplazando caracteres Unicode planos como `✦`, `⚙`, `⌂`, `✎`, `?` por `IconTeacher`, `IconStudent`, `IconAdmin`, `IconHome`, `IconContent`, `IconSun`, `IconMoon`, etc., así como los iconos específicos de las 6 actividades).
+    - **Rectificación y rediseño profesional del Modo Noche:** Atendiendo la observación del docente sobre la pérdida de contraste y los colores estridentes/pantanosos del intento previo, se reescribió por completo la paleta nocturna adoptando un estándar de alta gama (estilo Linear/GitHub/Apple Dark):
+      * Fondo carbón neutro profundo (`#0A0D0F`) y superficies de tarjeta en `#12161A` con bordes ultra-finos `#1E262C`, eliminando el tinte verdoso sucio y los parches de color extraños en métricas.
+      * Jerarquía de texto limpia y natural: títulos y encabezados en blanco nítido (`#F8FAFC`), consignas en `#CBD5E1`, y textos secundarios (`small`, metadatos, subtítulos, pies de tarjeta) en gris slate claro (`#94A3B8`) con ratio de contraste accesible > 8:1 sin forzar tonos verde agua artificiales.
+      * Opciones de evaluación en Modo Noche con fondo `#151A1F`, borde `#232B32`, y al seleccionarse un resalte sutil en ámbar cálido con texto blanco puro.
+    - **Transformación profunda del Modo Día:** Isotipo de marca moderno con esquinas suaves (12px/14px), tarjetas de rol con círculos pastel de alta gama, barra superior con sombra flotante suave y botones píldora consistentes.
+    - **Eliminación definitiva de fondos blancos en Modo Noche (KPIs y Hover de tablas):** Atendiendo la captura y reporte específico del docente donde las tarjetas de resumen y las filas de la tabla quedaban con fondo blanco ilegible en Modo Noche:
+      * Se neutralizaron los fondos blancos forzados en `.results-summary`, sustituyéndolos por carbón elevado `#12161A` con bordes `#1E262C` y dando máxima vitalidad y diferenciación a los cuatro indicadores KPI: Respuestas registradas en azul cielo vibrante (`#38BDF8`), Aciertos en verde esmeralda luminoso (`#34D399`), Intentos en ámbar cálido brillante (`#FBBF24`) y Puntaje acumulado en lila orquídea (`#C084FC`), con etiquetas descriptivas en gris slate neutro legible (`#94A3B8`).
+      * En la tabla de resultados (`.results-panel` y `.result-detail`), se eliminó el fondo claro `#F3F9F3` en hover y filas seleccionadas, reemplazándolo por un carbón secundario distinguible (`#1A232B`), con nombres de estudiantes en blanco puro (`#FFFFFF`), códigos en ámbar cálido (`#F8A452`), badges de estado en verde bosque nocturno (`#12281E`) y botón "Ver detalle" en ámbar luminoso.
+      * Se auditaron y adaptaron todas las interacciones de hover en tarjetas de actividad, listas, filtros de sala, menús desplegables y modales para garantizar que ningún elemento interactivo despliegue fondos claros al pasar el cursor en Modo Noche.
+    - **Ajuste ergonómico de títulos e higienización de la Pantalla de Contenido en Modo Noche:**
+      * **Eliminación de la redirección al inicio desde títulos de pantalla:** Se removió la interactividad de enlace (`onHome`) en el componente `PageIntro` de todas las pantallas (Contenido, Propuestas, Salas, Resultados y paneles administrativos). Los títulos quedan como encabezados informativos estáticos normales sin `role="button"`, sin eventos de clic y sin `cursor: pointer`, reservando la navegación exclusivamente para la barra lateral y los controles destinados a tal fin.
+      * **Corrección de fondos blancos en la Pantalla de Contenido (`ContentView`):** Se neutralizaron los fondos menta y grises claros de las tarjetas de compatibilidad (`.compatibility-item` y `.compatibility-item.unavailable`), pasando a carbón secundario `#151A1F` con textos legibles en blanco y slate. Los chips de estadísticas (`.template-stats span`), las notas (`.generated-note`), el contador de pestañas (`.tabs span`) y los iconos de tipo (`.list-type.type-*`) ahora usan fondos oscuros y tonos vibrantes acordes al Modo Noche.
+      * **Modales de contenido:** Se adaptaron los constructores y vistas previas de plantilla (`TemplateBuilder`, `TemplatePreview` y `TemplateActivityPicker`), asegurando que bloques repetibles, barras de progreso y tarjetas de selección utilicen la paleta oscura de alto contraste.
+- Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 suites intactas) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores. Servidor de desarrollo Vite activo con HMR.

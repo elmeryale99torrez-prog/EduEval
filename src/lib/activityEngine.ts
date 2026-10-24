@@ -1,4 +1,4 @@
-export type ActivityType = 'scenario' | 'trueFalse' | 'matching' | 'sorting' | 'ordering' | 'singleChoice'
+export type ActivityType = 'trueFalse' | 'singleChoice' | 'matching' | 'sorting' | 'ordering' | 'scenario'
 
 export type ScenarioOption = { id: string; text: string; consequence: string; feedback: string; recommended: boolean }
 export type ScenarioStage = { id: string; title: string; prompt: string; options: ScenarioOption[] }
@@ -6,12 +6,18 @@ export type MatchingPair = { id: string; left: string; right: string }
 export type SortingItem = { id: string; label: string; category: string }
 export type ChoiceOption = { id: string; label: string; correct: boolean }
 export type ActivityDetails = {
-  scenario?: { situation: string; stages: ScenarioStage[] }
-  trueFalse?: { statement: string; correct: boolean; explanation: string }
-  matching?: { pairs: MatchingPair[] }
-  sorting?: { categories: string[]; items: SortingItem[] }
-  ordering?: { steps: string[] }
-  singleChoice?: { options: ChoiceOption[] }
+  // context y hint pertenecen al contrato v1.2 (src/lib/activities/trueFalse.ts); son opcionales para actividades heredadas.
+  trueFalse?: { statement: string; correct: boolean; explanation: string; context?: string; hint?: string }
+  // context, hint y explanation pertenecen al contrato v1.2 (src/lib/activities/singleChoice.ts); son opcionales para actividades heredadas.
+  singleChoice?: { options: ChoiceOption[]; context?: string; hint?: string; explanation?: string }
+  // context, hint y explanation pertenecen al contrato v1.2 (src/lib/activities/matching.ts); son opcionales para actividades heredadas.
+  matching?: { pairs: MatchingPair[]; context?: string; hint?: string; explanation?: string }
+  // context, hint y explanation pertenecen al contrato v1.2 (src/lib/activities/sorting.ts); son opcionales para actividades heredadas.
+  sorting?: { categories: string[]; items: SortingItem[]; context?: string; hint?: string; explanation?: string }
+  // context, hint y explanation pertenecen al contrato v1.2 (src/lib/activities/ordering.ts); son opcionales para actividades heredadas.
+  ordering?: { steps: string[]; context?: string; hint?: string; explanation?: string }
+  // hint y explanation pertenecen al contrato v1.2 (src/lib/activities/scenario.ts); son opcionales para actividades heredadas.
+  scenario?: { situation: string; stages: ScenarioStage[]; hint?: string; explanation?: string }
 }
 
 export type Activity = {
@@ -91,12 +97,13 @@ export function isResponseComplete(activity: Activity, response: ActivityRespons
 export function compareActivityResponse(activity: Activity, response: ActivityResponse): boolean {
   if (!isResponseComplete(activity, response)) return false
   const runtime = activityRuntime(activity)
-  if (response.type === 'scenario') return runtime.scenario.stages.every((stage) => stage.options.find((option) => option.text === response.choices[stage.id])?.recommended === true)
-  if (response.type === 'trueFalse') return response.value === (runtime.trueFalse.correct ? 'Verdadero' : 'Falso')
-  if (response.type === 'singleChoice') return runtime.singleChoice.options.find((option) => option.label === response.value)?.correct === true
-  if (response.type === 'matching') return runtime.matching.pairs.every((pair) => response.pairs[pair.left] === pair.right)
-  if (response.type === 'sorting') return runtime.sorting.items.every((item) => response.assignments[item.id] === item.category)
-  return response.order.every((step, index) => step === runtime.ordering.steps[index])
+  if (response.type === 'scenario') return activity.type === 'scenario' && runtime.scenario.stages.every((stage) => stage.options.find((option) => option.id === response.choices[stage.id] || option.text === response.choices[stage.id])?.recommended === true)
+  if (response.type === 'trueFalse') return activity.type === 'trueFalse' && response.value === (runtime.trueFalse.correct ? 'Verdadero' : 'Falso')
+  if (response.type === 'singleChoice') return activity.type === 'singleChoice' && runtime.singleChoice.options.find((option) => option.id === response.value || option.label === response.value)?.correct === true
+  if (response.type === 'matching') return activity.type === 'matching' && runtime.matching.pairs.every((pair) => response.pairs[pair.left] === pair.right)
+  if (response.type === 'sorting') return activity.type === 'sorting' && runtime.sorting.items.every((item) => response.assignments[item.id] === item.category)
+  if (response.type === 'ordering') return activity.type === 'ordering' && response.order.every((step, index) => step === runtime.ordering.steps[index])
+  return false
 }
 
 export function serializeActivityResponse(response: ActivityResponse): string {
@@ -109,6 +116,13 @@ export function serializeActivityResponse(response: ActivityResponse): string {
 
 export function evaluateActivityResponse(activity: Activity, response: ActivityResponse | undefined, scorePerQuestion: number): EvaluatedResponse {
   if (!response) return { response: '', status: 'omitted', correct: null, score: 0 }
+  // Falso/verdadero, Selección única, Asociación, Clasificación, Ordenamiento y Escenario v1.2: una respuesta vacía es una omisión, nunca una respuesta incorrecta.
+  if (response.type === 'trueFalse' && activity.type === 'trueFalse' && !response.value) return { response: '', status: 'omitted', correct: null, score: 0 }
+  if (response.type === 'singleChoice' && activity.type === 'singleChoice' && !response.value) return { response: '', status: 'omitted', correct: null, score: 0 }
+  if (response.type === 'matching' && activity.type === 'matching' && Object.values(response.pairs).every((value) => !value)) return { response: '', status: 'omitted', correct: null, score: 0 }
+  if (response.type === 'sorting' && activity.type === 'sorting' && Object.values(response.assignments).every((value) => !value)) return { response: '', status: 'omitted', correct: null, score: 0 }
+  if (response.type === 'ordering' && activity.type === 'ordering' && response.order.length === 0) return { response: '', status: 'omitted', correct: null, score: 0 }
+  if (response.type === 'scenario' && activity.type === 'scenario' && Object.values(response.choices).every((value) => !value)) return { response: '', status: 'omitted', correct: null, score: 0 }
   const correct = compareActivityResponse(activity, response)
   return { response: serializeActivityResponse(response), status: 'answered', correct, score: correct ? scorePerQuestion : 0 }
 }

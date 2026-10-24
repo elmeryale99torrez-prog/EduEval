@@ -13,6 +13,18 @@ import type { Profile } from './lib/auth'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { enqueueSyncItem, markSyncItemFailed, readSyncQueue, removeSyncItem, syncQueueChangedEvent, type SyncKind, type SyncQueueItem } from './lib/sync'
 import { detectContentCompatibility, OFFICIAL_IMPORT_PROMPT, type ContentImportDocument, parseContentImport } from './lib/contentImport'
+import { TRUE_FALSE_LIMITS, validateTrueFalseDefinition } from './lib/activities/trueFalse'
+import { SINGLE_CHOICE_LIMITS, validateSingleChoiceDefinition } from './lib/activities/singleChoice'
+import { MATCHING_LIMITS, scrambleRightOptions, validateMatchingDefinition } from './lib/activities/matching'
+import { SORTING_LIMITS, scrambleSortingItems, validateSortingDefinition } from './lib/activities/sorting'
+import { ORDERING_LIMITS, scrambleOrderingSteps, validateOrderingDefinition } from './lib/activities/ordering'
+import { SCENARIO_LIMITS, validateScenarioDefinition } from './lib/activities/scenario'
+import {
+  IconSun, IconMoon, IconHome, IconContent, IconProposals, IconRooms,
+  IconResults, IconUsers, IconAudit, IconTeacher, IconStudent, IconAdmin,
+  IconArrowRight, IconHelp, IconTrueFalse, IconSingleChoice, IconMatching,
+  IconSorting, IconOrdering, IconScenario
+} from './lib/icons'
 
 type Role = 'admin' | 'teacher' | 'student'
 type View = 'overview' | 'content' | 'proposals' | 'rooms' | 'results' | 'play' | 'adminUsers' | 'adminAudit'
@@ -40,7 +52,7 @@ type EvaluationTemplate = {
 type RoomStatus = 'draft' | 'ready' | 'waiting' | 'active' | 'finished' | 'archived'
 type RoomSettings = { name: string; instructions: string; activityIds: string[]; questionCount: number; limit: number; time: number | null; scorePerQuestion: number; shuffleQuestions: boolean; allowBack: boolean }
 type Room = RoomSettings & { id: string; code: string; activities: string[]; status: RoomStatus; createdAt: string; startedAt?: string; finishedAt?: string; archivedAt?: string }
-type AttemptAnswer = { index: number; activityId: string; activityTitle: string; activityType: ActivityType; response: string; status: 'answered' | 'omitted'; correct: boolean | null; score: number; timeSeconds: number }
+type AttemptAnswer = { index: number; activityId: string; activityTitle: string; activityType: ActivityType; response: string; status: 'answered' | 'omitted'; correct: boolean | null; score: number; timeSeconds: number; hint?: string; explanation?: string }
 type AttemptEvent = { type: 'joined' | 'answer_submitted' | 'omitted' | 'navigated_back' | 'finished' | 'timeout'; at: string; detail?: string }
 type StudentAttempt = { id: string; roomId: string; roomName: string; roomCode: string; studentName: string; startedAt: string; finishedAt: string; status: 'completed' | 'timeout'; totalQuestions: number; answeredCount: number; omittedCount: number; correctCount: number; score: number; maxScore: number; answers: AttemptAnswer[]; events: AttemptEvent[] }
 type StudentSessionSnapshot = { studentName: string; roomCode: string; room: Room; participantId: string; guestToken: string; questionIds: string[]; responses: Record<number, ActivityResponse>; answerTimes: Record<number, number>; startedAt: string; events: AttemptEvent[]; finished: boolean; playIndex: number; submitted: boolean }
@@ -53,25 +65,25 @@ const allowedPanelViews: Record<'teacher' | 'admin', View[]> = {
   admin: ['overview', 'adminUsers', 'rooms', 'adminAudit', 'results'],
 }
 
-const types: Record<ActivityType, { label: string; icon: string; description: string }> = {
-  scenario: { label: 'Escenario de decisiones', icon: '◈', description: 'Elige una respuesta ante una situación real.' },
-  trueFalse: { label: 'Falso / verdadero', icon: '◉', description: 'Comprueba una afirmación en un clic.' },
-  matching: { label: 'Asociación', icon: '⌘', description: 'Relaciona conceptos y definiciones.' },
-  sorting: { label: 'Clasificación', icon: '⬡', description: 'Arrastra elementos a su categoría.' },
-  ordering: { label: 'Ordenamiento', icon: '↕', description: 'Ordena los pasos de un proceso.' },
-  singleChoice: { label: 'Selección múltiple', icon: '✓', description: 'Una sola opción es correcta.' },
+const types: Record<ActivityType, { label: string; icon: React.ReactNode; description: string }> = {
+  trueFalse: { label: 'Falso / verdadero', icon: <IconTrueFalse size={18} />, description: 'Comprueba una afirmación en un clic.' },
+  singleChoice: { label: 'Selección múltiple', icon: <IconSingleChoice size={18} />, description: 'Una sola opción es correcta.' },
+  matching: { label: 'Asociación', icon: <IconMatching size={18} />, description: 'Relaciona conceptos y definiciones.' },
+  sorting: { label: 'Clasificación', icon: <IconSorting size={18} />, description: 'Arrastra elementos a su categoría.' },
+  ordering: { label: 'Ordenamiento', icon: <IconOrdering size={18} />, description: 'Ordena los pasos de un proceso.' },
+  scenario: { label: 'Escenario de decisiones', icon: <IconScenario size={18} />, description: 'Elige una respuesta ante una situación real.' },
 }
 
 const initialActivities: Activity[] = [
-  { id: 'a1', title: 'Decidir con empatía', type: 'scenario', topic: 'Convivencia', difficulty: 'Inicial', prompt: 'Tu equipo no está de acuerdo. ¿Qué haces primero?', options: ['Escuchar las razones de cada persona', 'Imponer la decisión más rápida', 'Dejar que el conflicto crezca'], answer: 'Escuchar las razones de cada persona', feedback: 'Escuchar permite comprender el problema antes de decidir.', status: 'published' },
-  { id: 'a2', title: 'Recursos compartidos', type: 'trueFalse', topic: 'Sostenibilidad', difficulty: 'Inicial', prompt: 'Reutilizar materiales reduce la cantidad de residuos.', options: ['Verdadero', 'Falso'], answer: 'Verdadero', feedback: 'La reutilización extiende la vida útil de los materiales.', status: 'published' },
-  { id: 'a3', title: 'Mapa de actores', type: 'matching', topic: 'Participación', difficulty: 'Intermedio', prompt: 'Relaciona cada actor con su aporte.', options: ['Estudiante → propone ideas', 'Docente → facilita el proceso', 'Comunidad → aporta contexto'], answer: ['Estudiante → propone ideas', 'Docente → facilita el proceso', 'Comunidad → aporta contexto'], feedback: 'Cada actor aporta una perspectiva distinta.', status: 'published' },
-  { id: 'a4', title: '¿Dónde va cada residuo?', type: 'sorting', topic: 'Sostenibilidad', difficulty: 'Inicial', prompt: 'Clasifica cada elemento en la categoría correcta.', options: ['Botella de vidrio', 'Cáscara de fruta', 'Papel limpio', 'Pila usada'], answer: ['Reciclable', 'Orgánico', 'Reciclable', 'Peligroso'], feedback: 'Separar correctamente facilita el aprovechamiento y evita riesgos.', status: 'published' },
-  { id: 'a5', title: 'Pasos para dialogar', type: 'ordering', topic: 'Convivencia', difficulty: 'Intermedio', prompt: 'Ordena el proceso para resolver un desacuerdo.', options: ['Escuchar', 'Reconocer el problema', 'Proponer alternativas', 'Acordar un siguiente paso'], answer: ['Reconocer el problema', 'Escuchar', 'Proponer alternativas', 'Acordar un siguiente paso'], feedback: 'Nombrar el problema y escuchar son la base de un acuerdo.', status: 'published' },
-  { id: 'a6', title: 'Una acción sostenible', type: 'singleChoice', topic: 'Sostenibilidad', difficulty: 'Inicial', prompt: '¿Cuál acción disminuye el consumo de agua?', options: ['Cerrar el grifo mientras te cepillas', 'Dejar correr el agua', 'Usar agua potable para limpiar la acera'], answer: 'Cerrar el grifo mientras te cepillas', feedback: 'Pequeñas acciones diarias pueden reducir el consumo.', status: 'published' },
+  { id: 'a2', title: 'Recursos compartidos', type: 'trueFalse', topic: 'Sostenibilidad', difficulty: 'Inicial', prompt: 'Reutilizar materiales reduce la cantidad de residuos.', options: ['Verdadero', 'Falso'], answer: 'Verdadero', feedback: 'Considera qué ocurre con el ciclo de vida de un material cuando vuelve a utilizarse antes de desecharse.', details: { trueFalse: { context: 'En un laboratorio escolar se reutilizan los envases de vidrio limpios para almacenar soluciones durante todo el semestre.', statement: 'Reutilizar materiales reduce la cantidad de residuos que llegan al vertedero.', correct: true, hint: 'Considera qué ocurre con el ciclo de vida de un material cuando vuelve a utilizarse antes de desecharse.', explanation: 'La reutilización prolonga la vida útil del envase y evita generar un residuo de un solo uso en cada práctica.' } }, status: 'published' },
+  { id: 'a6', title: 'Una acción sostenible', type: 'singleChoice', topic: 'Sostenibilidad', difficulty: 'Inicial', prompt: '¿Cuál acción disminuye directamente el desperdicio de agua potable en el hogar?', options: ['Cerrar el grifo mientras te cepillas', 'Dejar correr el agua', 'Usar agua potable para limpiar la acera'], answer: 'Cerrar el grifo mientras te cepillas', feedback: 'Analiza en cuál de las acciones se interrumpe el flujo de agua mientras no se está utilizando.', details: { singleChoice: { context: 'En una vivienda urbana se busca reducir el consumo diario de agua potable sin afectar la higiene personal.', hint: 'Analiza en cuál de las acciones se interrumpe el flujo de agua mientras no se está utilizando.', explanation: 'Cerrar el grifo durante el cepillado evita que varios litros de agua potable se pierdan por minuto sin uso efectivo.', options: [{ id: 'a6-opt-1', label: 'Cerrar el grifo mientras te cepillas', correct: true }, { id: 'a6-opt-2', label: 'Dejar correr el agua', correct: false }, { id: 'a6-opt-3', label: 'Usar agua potable para limpiar la acera', correct: false }] } }, status: 'published' },
+  { id: 'a3', title: 'Mapa de actores', type: 'matching', topic: 'Participación', difficulty: 'Intermedio', prompt: 'Enlaza cada actor con su responsabilidad dentro del proyecto.', options: ['Estudiante → propone ideas', 'Docente → facilita el proceso', 'Comunidad → aporta contexto'], answer: ['Estudiante → propone ideas', 'Docente → facilita el proceso', 'Comunidad → aporta contexto'], feedback: 'Observa qué función desempeña directamente cada actor según su ámbito de participación.', details: { matching: { context: 'En un proyecto de convivencia escolar intervienen tres actores con responsabilidades complementarias.', hint: 'Observa qué función desempeña directamente cada actor según su ámbito de participación.', explanation: 'El estudiante aporta iniciativas desde su vivencia en el aula, el docente guía metodológicamente el proceso y la comunidad contextualiza el entorno.', pairs: [{ id: 'a3-p1', left: 'Estudiante', right: 'propone ideas' }, { id: 'a3-p2', left: 'Docente', right: 'facilita el proceso' }, { id: 'a3-p3', left: 'Comunidad', right: 'aporta contexto' }] } }, status: 'published' },
+  { id: 'a4', title: '¿Dónde va cada residuo?', type: 'sorting', topic: 'Sostenibilidad', difficulty: 'Inicial', prompt: 'Clasifica cada elemento en la categoría correcta.', options: ['Botella de vidrio', 'Cáscara de fruta', 'Papel limpio', 'Pila usada'], answer: ['Reciclable', 'Orgánico', 'Reciclable', 'Peligroso'], feedback: 'Identifica si el material puede reincorporarse a un ciclo industrial, compostarse o si contiene compuestos tóxicos.', details: { sorting: { context: 'En el punto ecológico del colegio se separan los residuos según su tratamiento posterior y nivel de riesgo.', categories: ['Reciclable', 'Orgánico', 'Peligroso'], items: [{ id: 'a4-i1', label: 'Botella de vidrio', category: 'Reciclable' }, { id: 'a4-i2', label: 'Cáscara de fruta', category: 'Orgánico' }, { id: 'a4-i3', label: 'Papel limpio', category: 'Reciclable' }, { id: 'a4-i4', label: 'Pila usada', category: 'Peligroso' }], hint: 'Identifica si el material puede reincorporarse a un ciclo industrial, compostarse o si contiene compuestos tóxicos.', explanation: 'El vidrio y el papel limpio son reciclables; los restos de fruta son biodegradables (orgánicos); las pilas contienen metales pesados peligrosos.' } }, status: 'published' },
+  { id: 'a5', title: 'Pasos para dialogar', type: 'ordering', topic: 'Convivencia', difficulty: 'Intermedio', prompt: 'Ordena el proceso para resolver un desacuerdo.', options: ['Reconocer el problema', 'Escuchar', 'Proponer alternativas', 'Acordar un siguiente paso'], answer: ['Reconocer el problema', 'Escuchar', 'Proponer alternativas', 'Acordar un siguiente paso'], feedback: 'Nombrar el problema y escuchar son la base previa para acordar alternativas viables.', details: { ordering: { context: 'En una asamblea escolar surge un desacuerdo respecto al uso de las áreas deportivas compartidas.', steps: ['Reconocer el problema', 'Escuchar', 'Proponer alternativas', 'Acordar un siguiente paso'], hint: 'Nombrar el problema y escuchar son la base previa para acordar alternativas viables.', explanation: 'Primero se define el conflicto y se escucha a las partes; solo después se diseñan y pactan soluciones compartidas.' } }, status: 'published' },
+  { id: 'a1', title: 'Decidir con empatía', type: 'scenario', topic: 'Convivencia', difficulty: 'Inicial', prompt: 'Tu equipo no está de acuerdo. ¿Qué haces primero?', options: ['Escuchar las razones de cada persona', 'Imponer la decisión más rápida', 'Dejar que el conflicto crezca'], answer: 'Escuchar las razones de cada persona', feedback: 'Escuchar y acordar criterios comunes genera cohesión y avance real.', details: { scenario: { situation: 'En la semana previa a la feria de ciencias, dos integrantes del equipo proponen enfoques contradictorios y los plazos de entrega se acortan.', stages: [{ id: 'a1-s1', title: 'Apertura del diálogo', prompt: '¿Cuál es el primer paso para desbloquear el trabajo del grupo?', options: [{ id: 'a1-opt-1', text: 'Escuchar las razones de cada persona y acordar criterios comunes', consequence: 'El equipo encuentra puntos de coincidencia y retoma la planificación sin fricciones.', feedback: 'Excelente decisión: la escucha activa y la búsqueda de acuerdos construyen confianza.', recommended: true }, { id: 'a1-opt-2', text: 'Imponer la decisión más rápida para no perder tiempo', consequence: 'Parte del equipo pierde motivación y la calidad del trabajo se resiente.', feedback: 'La imposición apresurada suele generar desapego y fragmenta el grupo.', recommended: false }, { id: 'a1-opt-3', text: 'Dejar que el conflicto se resuelva solo con el paso de los días', consequence: 'La tensión aumenta y se incumple la fecha de entrega asignada.', feedback: 'Evadir el conflicto no lo soluciona y perjudica a todo el colectivo.', recommended: false }] }], hint: 'Elige una alternativa que promueva el diálogo constructivo y el entendimiento mutuo antes de ejecutar.', explanation: 'El liderazgo compartido se sostiene en la empatía y la clarificación de acuerdos compartidos.' } }, status: 'published' },
 ]
 
-const initialRooms: Room[] = [{ id: 'r1', name: 'Diagnóstico 1 · Convivencia', instructions: 'Responde con calma y revisa tu razonamiento.', activityIds: ['a1', 'a2', 'a6'], questionCount: 3, limit: 24, time: null, scorePerQuestion: 10, shuffleQuestions: false, allowBack: true, code: 'ECO-274', activities: ['a1', 'a2', 'a6'], status: 'active', createdAt: '2026-10-20T08:00:00.000Z', startedAt: '2026-10-20T08:15:00.000Z' }]
+const initialRooms: Room[] = [{ id: 'r1', name: 'Diagnóstico 1 · Convivencia', instructions: 'Responde con calma y revisa tu razonamiento.', activityIds: ['a2', 'a6', 'a1'], questionCount: 3, limit: 24, time: null, scorePerQuestion: 10, shuffleQuestions: false, allowBack: true, code: 'ECO-274', activities: ['a2', 'a6', 'a1'], status: 'active', createdAt: '2026-10-20T08:00:00.000Z', startedAt: '2026-10-20T08:15:00.000Z' }]
 
 function normalizeRoom(room: Partial<Room>): Room {
   const activities = room.activities ?? room.activityIds ?? []
@@ -302,6 +314,7 @@ function hasPasswordRecoveryLink() {
 }
 
 const publicAppOrigin = (import.meta.env.VITE_PUBLIC_APP_URL?.trim() || 'https://evaluedu.elmer-yale99-torrez.chatgpt.site').replace(/\/$/, '')
+const FEEDBACK_EMAIL = 'elmeryaletorrez@gmail.com'
 
 function authRedirectUrl(role: Role, flow: 'recovery' | 'invite' = 'recovery') {
   const url = new URL(`${publicAppOrigin}/`)
@@ -313,6 +326,16 @@ function authRedirectUrl(role: Role, flow: 'recovery' | 'invite' = 'recovery') {
 function App() {
   const initialRole = roleFromUrl()
   const [role, setRole] = useState<Role>(() => initialRole ?? 'teacher')
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = readStorage<'light' | 'dark' | null>('evaluedu-theme', null)
+    if (saved === 'light' || saved === 'dark') return saved
+    return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem('evaluedu-theme', JSON.stringify(theme)) } catch {}
+  }, [theme])
+  const toggleTheme = () => setTheme((current) => current === 'light' ? 'dark' : 'light')
   const [view, setView] = useState<View>('overview')
   const [activities, setActivities] = useState<Activity[]>(() => readStorage('edueval-activities', initialActivities))
   const [rooms, setRooms] = useState<Room[]>(() => readStorage<Partial<Room>[]>('edueval-rooms', initialRooms).map(normalizeRoom))
@@ -349,6 +372,8 @@ function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState(() => readStorage('edueval-last-sync', ''))
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
   const [showPasswordChange, setShowPasswordChange] = useState(false)
+  const [showHelpModal, setShowHelpModal] = useState(false)
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false)
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
@@ -663,6 +688,8 @@ function App() {
       if (mobileNavOpen) { setMobileNavOpen(false); keepAppHistory(); return }
       if (selectedActivity) { setSelectedActivity(null); keepAppHistory(); return }
       if (showPasswordChange) { setShowPasswordChange(false); keepAppHistory(); return }
+      if (showHelpModal) { setShowHelpModal(false); keepAppHistory(); return }
+      if (showFeedbackModal) { setShowFeedbackModal(false); keepAppHistory(); return }
       if (view === 'play' && playIndex > 0 && studentRoom?.allowBack) { previousStudentQuestion(); return }
       if (view !== 'overview') { show('overview'); keepAppHistory(); return }
       if (!authSession && hasChosenRole) { setHasChosenRole(false); keepAppHistory(); return }
@@ -1103,7 +1130,20 @@ function App() {
       const activity = published.find((item) => item.id === activityId)
       const response = studentResponses[index]
       const evaluated = activity ? evaluateActivityResponse(activity, response, studentRoom.scorePerQuestion) : { response: '', status: 'omitted' as const, correct: null, score: 0 }
-      return { index, activityId, activityTitle: activity?.title ?? 'Actividad eliminada', activityType: activity?.type ?? 'singleChoice', ...evaluated, timeSeconds: studentAnswerTimes[index] ?? 0 }
+      const activityMeta = activity?.type === 'trueFalse'
+        ? { hint: evaluated.status === 'answered' ? (activity.details?.trueFalse?.hint ?? activity.feedback) : '', explanation: activity.details?.trueFalse?.explanation ?? '' }
+        : activity?.type === 'singleChoice'
+          ? { hint: evaluated.status === 'answered' ? (activity.details?.singleChoice?.hint ?? activity.feedback) : '', explanation: activity.details?.singleChoice?.explanation ?? '' }
+          : activity?.type === 'matching'
+            ? { hint: evaluated.status === 'answered' ? (activity.details?.matching?.hint ?? activity.feedback) : '', explanation: activity.details?.matching?.explanation ?? '' }
+            : activity?.type === 'sorting'
+              ? { hint: evaluated.status === 'answered' ? (activity.details?.sorting?.hint ?? activity.feedback) : '', explanation: activity.details?.sorting?.explanation ?? '' }
+              : activity?.type === 'ordering'
+                ? { hint: evaluated.status === 'answered' ? (activity.details?.ordering?.hint ?? activity.feedback) : '', explanation: activity.details?.ordering?.explanation ?? '' }
+                : activity?.type === 'scenario'
+                  ? { hint: evaluated.status === 'answered' ? (activity.details?.scenario?.hint ?? activity.feedback) : '', explanation: activity.details?.scenario?.explanation ?? '' }
+                  : {}
+      return { index, activityId, activityTitle: activity?.title ?? 'Actividad eliminada', activityType: activity?.type ?? 'singleChoice', ...evaluated, ...activityMeta, timeSeconds: studentAnswerTimes[index] ?? 0 }
     })
     const record: StudentAttempt = { id: `${studentRoom.id}-${studentName.trim().toLowerCase()}-${Date.now()}`, roomId: studentRoom.id, roomName: studentRoom.name, roomCode: studentRoom.code, studentName: studentName.trim(), startedAt: studentStartedAt || finishTime, finishedAt: finishTime, status: reason, totalQuestions: answerRows.length, answeredCount: answerRows.filter((answer) => answer.status === 'answered').length, omittedCount: answerRows.filter((answer) => answer.status === 'omitted').length, correctCount: answerRows.filter((answer) => answer.correct === true).length, score: answerRows.reduce((total, answer) => total + answer.score, 0), maxScore: answerRows.length * studentRoom.scorePerQuestion, answers: answerRows, events: [...studentEvents, ...(finalEvent ? [finalEvent] : []), { type: reason === 'timeout' ? 'timeout' : 'finished', at: finishTime }] }
     setAttempts((current) => current.some((item) => studentAttemptKey(item.roomId, item.studentName) === key) ? current : [record, ...current])
@@ -1209,9 +1249,9 @@ function App() {
     show('overview')
   }
   const exportCsv = () => {
-    const rows = [['intento_id', 'estudiante', 'sala', 'codigo_sala', 'estado', 'inicio', 'finalizacion', 'preguntas', 'respondidas', 'omitidas', 'correctas', 'puntaje', 'puntaje_maximo', 'actividad', 'tipo_actividad', 'estado_respuesta', 'respuesta', 'correcta', 'puntaje_respuesta', 'tiempo_segundos']]
-    displayedAttempts.forEach((attempt) => attempt.answers.forEach((answer) => rows.push([attempt.id, attempt.studentName, attempt.roomName, attempt.roomCode, attempt.status === 'timeout' ? 'tiempo_agotado' : 'finalizada', attempt.startedAt, attempt.finishedAt, String(attempt.totalQuestions), String(attempt.answeredCount), String(attempt.omittedCount), String(attempt.correctCount), String(attempt.score), String(attempt.maxScore), answer.activityTitle, types[answer.activityType].label, answer.status === 'answered' ? 'respondida' : 'omitida', answer.response || 'Sin respuesta', answer.correct === null ? 'no evaluada' : answer.correct ? 'si' : 'no', String(answer.score), String(answer.timeSeconds)])))
-    if (rows.length === 1) rows.push(['', 'Sin intentos registrados', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''])
+    const rows = [['intento_id', 'estudiante', 'sala', 'codigo_sala', 'estado', 'inicio', 'finalizacion', 'preguntas', 'respondidas', 'omitidas', 'correctas', 'puntaje', 'puntaje_maximo', 'actividad', 'tipo_actividad', 'estado_respuesta', 'respuesta', 'correcta', 'puntaje_respuesta', 'pista_entregada', 'explicacion_privada', 'tiempo_segundos']]
+    displayedAttempts.forEach((attempt) => attempt.answers.forEach((answer) => rows.push([attempt.id, attempt.studentName, attempt.roomName, attempt.roomCode, attempt.status === 'timeout' ? 'tiempo_agotado' : 'finalizada', attempt.startedAt, attempt.finishedAt, String(attempt.totalQuestions), String(attempt.answeredCount), String(attempt.omittedCount), String(attempt.correctCount), String(attempt.score), String(attempt.maxScore), answer.activityTitle, types[answer.activityType].label, answer.status === 'answered' ? 'respondida' : 'omitida', answer.response || 'Sin respuesta', answer.correct === null ? 'no evaluada' : answer.correct ? 'si' : 'no', String(answer.score), answer.hint ?? '', answer.explanation ?? '', String(answer.timeSeconds)])))
+    if (rows.length === 1) rows.push(['', 'Sin intentos registrados', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''])
     const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(';')).join('\n')
     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })); link.download = 'edueval-resultados.csv'; link.click(); URL.revokeObjectURL(link.href)
     notify(`${displayedAttempts.length} intento${displayedAttempts.length === 1 ? '' : 's'} exportado${displayedAttempts.length === 1 ? '' : 's'} para abrir en Excel.`)
@@ -1238,23 +1278,64 @@ function App() {
   if (isSupabaseConfigured && hasChosenRole && role !== 'student' && authSession && authProfile && !canAccessPanel(authProfile, role)) return <RoleMismatchScreen selectedRole={role} actualRole={authProfile.role} onUseActualRole={() => { setRole(authProfile.role); show('overview') }} onBack={signOut} />
   if (isSupabaseConfigured && hasChosenRole && role === 'teacher' && authSession && !authProfile) return <ProfileSetupScreen user={authSession.user} onBack={signOut} onCreated={setAuthProfile} />
   if (isSupabaseConfigured && hasChosenRole && role === 'admin' && authSession && !authProfile) return <ProfileUnavailableScreen email={authSession.user.email ?? ''} onBack={signOut} />
-  return !hasChosenRole ? <RoleLanding onChoose={changeRole} /> : <div className="app-shell">
+  return !hasChosenRole ? <RoleLanding onChoose={changeRole} theme={theme} onToggleTheme={toggleTheme} /> : <div className="app-shell">
     <header className="topbar">
       <button className="brand" onClick={() => show('overview')} aria-label="Ir al inicio"><span className="brand-mark">E</span><span><strong>EvaluEdu</strong><small>aprendizaje activo</small></span></button>
-       <div className="topbar-actions"><span className={`connection-pill ${backendReady ? 'ready' : ''} ${!isOnline ? 'offline' : ''} ${syncQueue.length ? 'pending' : ''}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{syncLabel}</span>{syncQueue.length > 0 && isOnline && <button className="sync-button" type="button" onClick={() => void flushSyncQueue()} disabled={syncing}>{syncing ? '↻' : '↻ Sincronizar'}</button>}{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}{authSession ? <details className="account-menu"><summary className="avatar" aria-label="Abrir opciones de cuenta">{authProfile?.display_name.slice(0, 2).toUpperCase() ?? authSession.user.email?.slice(0, 2).toUpperCase() ?? 'LM'}</summary><div>{!authSession.user.is_anonymous && <button type="button" onClick={() => setShowPasswordChange(true)}>Cambiar contraseña</button>}<button type="button" onClick={() => void signOut()}>Cerrar sesión</button></div></details> : <button className="avatar" aria-label="Perfil">LM</button>}</div>
+       <div className="topbar-actions"><span className={`connection-pill ${backendReady ? 'ready' : ''} ${!isOnline ? 'offline' : ''} ${syncQueue.length ? 'pending' : ''}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{syncLabel}</span>{syncQueue.length > 0 && isOnline && <button className="sync-button" type="button" onClick={() => void flushSyncQueue()} disabled={syncing}>{syncing ? '↻' : '↻ Sincronizar'}</button>}{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
     </header>
     {role !== 'student' && mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavOpen(false)} />}
     <div className="layout">
-      {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? '⚙' : '✦'}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small>{role === 'admin' ? 'control de la plataforma' : 'crear · revisar · acompañar'}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon="▦" label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon="♙" label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon="⌘" label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon="◌" label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon="↗" label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon="⌂" label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon="✎" label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon="◌" label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon="⌘" label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon="↗" label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><div className="help-card"><span>?</span><p><b>¿Necesitas ayuda?</b><br />Explora la guía rápida de EvaluEdu.</p></div><small>EvaluEdu MVP · v0.1</small></div></aside>}
+      {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu MVP · v0.1</small></div></aside>}
       <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} onExport={exportCsv} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
     </div>{toast && <div className="toast" role="status">✓ {toast}</div>}
     {showPasswordChange && authSession && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} onSaved={() => { setShowPasswordChange(false); notify('Contraseña actualizada correctamente.') }} />}
+    {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
+    {showFeedbackModal && <FeedbackModal defaultEmail={authSession?.user.email ?? ''} defaultName={displayName} onClose={() => setShowFeedbackModal(false)} onSent={() => { setShowFeedbackModal(false); notify('Se abrió tu correo para enviar la sugerencia.') }} />}
     {selectedActivity && role !== 'student' && <ActivityPreview activity={selectedActivity} onClose={() => setSelectedActivity(null)} onDelete={role === 'teacher' ? () => void deleteActivity(selectedActivity) : undefined} />}
   </div>
 }
 
-function RoleLanding({ onChoose }: { onChoose: (role: Role) => void }) { return <div className="role-landing"><div className="landing-brand"><span className="brand-mark">E</span><div><strong>EvaluEdu</strong><small>aprendizaje activo</small></div></div><div className="landing-copy"><p className="eyebrow">EVALUACIÓN EDUCATIVA</p><h1>¿Cómo quieres entrar?</h1><p>Elige tu espacio para continuar. Cada rol tiene una experiencia diseñada para sus necesidades.</p></div><div className="role-cards"><RoleCard icon="✦" title="Docente" description="Crea contenido, prepara actividades y acompaña a tu grupo." onClick={() => onChoose('teacher')} tone="teacher" /><RoleCard icon="→" title="Estudiante" description="Ingresa a una sala con el código de tu docente." onClick={() => onChoose('student')} tone="student" /><RoleCard icon="⚙" title="Administrador" description="Gestiona docentes, permisos y configuración general." onClick={() => onChoose('admin')} tone="admin" /></div><small className="landing-note">EvaluEdu · v1.0</small></div> }
-function RoleCard({ icon, title, description, onClick, tone }: { icon: string; title: string; description: string; onClick: () => void; tone: string }) { return <button className={`role-card ${tone}`} onClick={onClick}><span className="role-card-icon">{icon}</span><span className="role-card-copy"><b>{title}</b><small>{description}</small></span><span className="role-card-arrow">→</span></button> }
+function RoleLanding({ onChoose, theme, onToggleTheme }: { onChoose: (role: Role) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
+  return (
+    <div className="role-landing">
+      <div className="landing-top-actions">
+        <button
+          className="theme-toggle-btn"
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'}
+          title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}
+        >
+          <span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span>
+        </button>
+      </div>
+      <div className="landing-brand">
+        <span className="brand-mark">E</span>
+        <div><strong>EvaluEdu</strong><small>aprendizaje activo</small></div>
+      </div>
+      <div className="landing-copy">
+        <p className="eyebrow">EVALUACIÓN EDUCATIVA</p>
+        <h1>¿Cómo quieres entrar?</h1>
+        <p>Elige tu espacio para continuar. Cada rol tiene una experiencia diseñada para sus necesidades.</p>
+      </div>
+      <div className="role-cards">
+        <RoleCard icon={<IconTeacher size={26} />} title="Docente" description="Crea contenido, prepara actividades y acompaña a tu grupo." onClick={() => onChoose('teacher')} tone="teacher" />
+        <RoleCard icon={<IconStudent size={26} />} title="Estudiante" description="Ingresa a una sala con el código de tu docente." onClick={() => onChoose('student')} tone="student" />
+        <RoleCard icon={<IconAdmin size={26} />} title="Administrador" description="Gestiona docentes, permisos y configuración general." onClick={() => onChoose('admin')} tone="admin" />
+      </div>
+      <small className="landing-note">EvaluEdu · v1.0</small>
+    </div>
+  )
+}
+function RoleCard({ icon, title, description, onClick, tone }: { icon: React.ReactNode; title: string; description: string; onClick: () => void; tone: string }) {
+  return (
+    <button className={`role-card ${tone}`} onClick={onClick}>
+      <span className="role-card-icon">{icon}</span>
+      <span className="role-card-copy"><b>{title}</b><small>{description}</small></span>
+      <span className="role-card-arrow"><IconArrowRight size={18} /></span>
+    </button>
+  )
+}
 
 function AuthLoading() { return <div className="auth-shell"><div className="auth-card"><span className="brand-mark">E</span><p className="eyebrow">EVALUDEU</p><h1>Verificando tu sesión</h1><p>Estamos comprobando tu acceso seguro.</p><div className="auth-loader" /></div></div> }
 
@@ -1276,6 +1357,27 @@ function ChangePasswordModal({ onClose, onSaved }: { onClose: () => void; onSave
     onSaved()
   }
   return <div className="modal-backdrop"><form className="modal-card admin-invite-modal auth-form" onSubmit={submit}><div className="modal-head"><div><p className="eyebrow">SEGURIDAD DE LA CUENTA</p><h2>Cambiar contraseña</h2><p className="modal-subtitle">Usa una contraseña personal de al menos seis caracteres.</p></div><button type="button" className="icon-button" onClick={onClose}>×</button></div><label>Nueva contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" required /></label><label>Repetir contraseña<input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" required /></label>{error && <div className="auth-message error">{error}</div>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Guardando…' : 'Guardar contraseña'}</button></div></form></div>
+}
+
+function HelpModal({ onClose }: { onClose: () => void }) {
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="help-modal-title"><article className="modal-card help-modal"><div className="modal-head"><div><p className="eyebrow">CENTRO DE AYUDA</p><h2 id="help-modal-title">Guía rápida de EvaluEdu</h2><p className="modal-subtitle">Recorrido práctico para preparar contenido, abrir una sala y acompañar a tu grupo.</p></div><button type="button" className="icon-button" aria-label="Cerrar guía rápida" onClick={onClose}>×</button></div><div className="tutorial-player" aria-label="Espacio reservado para video tutorial"><div className="tutorial-placeholder"><span className="tutorial-play-icon" aria-hidden="true">▶</span><b>Video tutorial</b><p>Este espacio mostrará el video de uso paso a paso cuando esté grabado.</p><small>Formato recomendado: MP4 16:9 · duración breve · subtítulos opcionales.</small></div></div><ol className="tutorial-steps"><li><span>01</span><div><b>Crea tu contenido</b><small>En Contenido estructura conceptos, situaciones, pasos o categorías desde una plantilla.</small></div></li><li><span>02</span><div><b>Revisa las actividades</b><small>Valida los formatos compatibles y ajusta las consignas o el feedback orientador.</small></div></li><li><span>03</span><div><b>Prepara una sala</b><small>En Salas elige hasta tres tipos de actividad, define puntaje, tiempo opcional y comparte el código.</small></div></li><li><span>04</span><div><b>Consulta los resultados</b><small>Revisa respuestas, omisiones y tiempos en privado o expórtalos a Excel/CSV.</small></div></li></ol><div className="modal-actions"><button type="button" className="primary-button" onClick={onClose}>Entendido</button></div></article></div>
+}
+
+function FeedbackModal({ defaultEmail, defaultName, onClose, onSent }: { defaultEmail: string; defaultName: string; onClose: () => void; onSent: () => void }) {
+  const [category, setCategory] = useState('Sugerencia')
+  const [message, setMessage] = useState('')
+  const [replyEmail, setReplyEmail] = useState(defaultEmail)
+  const [error, setError] = useState('')
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    if (message.trim().length < 10) return setError('Escribe al menos 10 caracteres para explicar tu sugerencia.')
+    setError('')
+    const subject = `[EvaluEdu · ${category}] ${defaultName}`
+    const body = [`Tipo: ${category}`, `Docente: ${defaultName}`, `Correo de contacto: ${replyEmail.trim() || 'No indicado'}`, '', 'Mensaje:', message.trim()].join('\n')
+    window.location.href = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+    onSent()
+  }
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title"><form className="modal-card feedback-modal auth-form" onSubmit={submit}><div className="modal-head"><div><p className="eyebrow">CONTACTO DOCENTE</p><h2 id="feedback-modal-title">Escribir sugerencia</h2><p className="modal-subtitle">Cuéntanos qué mejorarías o qué necesitas para tus clases. Tu mensaje se preparará para enviarse al equipo.</p></div><button type="button" className="icon-button" aria-label="Cerrar sugerencias" onClick={onClose}>×</button></div><label>Tipo de comentario<select value={category} onChange={(event) => setCategory(event.target.value)}><option value="Sugerencia">Sugerencia</option><option value="Problema">Problema al usar la app</option><option value="Actividad">Comentario sobre una actividad</option><option value="Otro">Otro comentario</option></select></label><label>Mensaje<textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={4} placeholder="Describe tu idea, ajuste o caso de uso en el aula." required /></label><label>Correo para responder<input type="email" value={replyEmail} onChange={(event) => setReplyEmail(event.target.value)} placeholder="docente@institucion.edu" /></label>{error && <div className="auth-message error">{error}</div>}<div className="auth-message success">Se abrirá tu aplicación de correo con el destinatario <b>{FEEDBACK_EMAIL}</b>.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button">Preparar correo →</button></div></form></div>
 }
 
 function InviteAcceptanceScreen({ email, onComplete, onCancel }: { email: string; onComplete: () => void; onCancel: () => void }) {
@@ -1351,7 +1453,7 @@ function AuthScreen({ role, onBack }: { role: Role; onBack: () => void }) {
     if (recoveryError) return setError(recoveryError.message)
     setRecoverySent(true)
   }
-  return <div className="auth-shell"><div className="auth-card"><button className="auth-back" onClick={onBack}>← Cambiar rol</button><span className="brand-mark">E</span><p className="eyebrow">ACCESO VERIFICADO</p><h1>Ingresa a tu panel</h1><p>Cuenta de {roleLabel}. El acceso requiere una cuenta creada o invitada por administración.</p><form onSubmit={submit} className="auth-form"><label>Correo electrónico<input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setRecoverySent(false) }} placeholder="tu@institucion.edu" required /></label><label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" minLength={6} required /></label>{error && <div className="auth-message error">{error}</div>}<button className="primary-button wide" type="submit">Verificar e ingresar →</button></form><button className="recovery-link" type="button" onClick={() => void requestRecovery()} disabled={recoverySending}>{recoverySending ? 'Enviando enlace…' : 'No pude crear mi contraseña / Recuperar acceso'}</button>{recoverySent && <div className="auth-message success">Si el correo está registrado, recibirás un enlace para crear o restablecer tu contraseña. Revisa también la carpeta de spam.</div>}<div className="auth-message success">¿Aún no tienes acceso? Un administrador debe invitar tu correo desde <b>Usuarios → Agregar usuario</b>.</div><small className="auth-footnote">La sesión se conserva de forma segura en este navegador. Nunca se usa la clave service_role.</small></div></div>
+  return <div className="auth-shell"><div className="auth-card"><button className="auth-back" onClick={onBack}>← Cambiar rol</button><span className="brand-mark">E</span><p className="eyebrow">ACCESO VERIFICADO</p><h1>Ingresa a tu panel</h1><p>Cuenta de {roleLabel}. El acceso se habilita por administración, mediante invitación o con un acceso piloto.</p><form onSubmit={submit} className="auth-form"><label>Correo electrónico<input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setRecoverySent(false) }} placeholder="tu@institucion.edu" required /></label><label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" minLength={6} required /></label>{error && <div className="auth-message error">{error}</div>}<button className="primary-button wide" type="submit">Ingresar con contraseña →</button></form><button className="recovery-link" type="button" onClick={() => void requestRecovery()} disabled={recoverySending}>{recoverySending ? 'Enviando enlace…' : 'No pude crear mi contraseña / Recuperar acceso'}</button>{recoverySent && <div className="auth-message success">Si el correo está registrado, recibirás un enlace para crear o restablecer tu contraseña. Revisa también la carpeta de spam.</div>}<div className="auth-message success">¿Aún no tienes acceso? Un administrador puede invitar tu correo desde <b>Usuarios → Agregar usuario</b> o crearle un acceso piloto.</div><small className="auth-footnote">La sesión se conserva de forma segura en este navegador. Nunca se usa la clave service_role.</small></div></div>
 }
 
 function ProfileSetupScreen({ user, onBack, onCreated }: { user: Session['user']; onBack: () => void; onCreated: (profile: Profile) => void }) {
@@ -1378,7 +1480,15 @@ function RoleMismatchScreen({ selectedRole, actualRole, onUseActualRole, onBack 
   return <div className="auth-shell"><div className="auth-card"><button className="auth-back" onClick={onBack}>← Cerrar sesión</button><span className="brand-mark">E</span><p className="eyebrow">ROL VERIFICADO</p><h1>Este panel no corresponde a tu cuenta</h1><p>Elegiste <b>{selectedLabel}</b>, pero Supabase verificó que tu cuenta tiene rol de <b>{actualLabel}</b>.</p><div className="auth-message error">El icono de entrada no concede permisos. El rol persistido es el que determina el acceso.</div><button className="primary-button wide" onClick={onUseActualRole}>Entrar como {actualLabel} →</button></div></div>
 }
 
-function NavButton({ active, icon, label, badge, onClick }: { active: boolean; icon: string; label: string; badge?: number; onClick: () => void }) { return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}><span>{icon}</span>{label}{badge ? <em>{badge}</em> : null}</button> }
+function NavButton({ active, icon, label, badge, onClick }: { active: boolean; icon: React.ReactNode; label: string; badge?: number; onClick: () => void }) {
+  return (
+    <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}>
+      <span className="nav-icon">{icon}</span>
+      <span className="nav-label">{label}</span>
+      {badge ? <em>{badge}</em> : null}
+    </button>
+  )
+}
 
 const demoAdminUsers = [
   { name: 'Lucía Martínez', email: 'lucia@evaluedu.demo', role: 'Docente', status: 'Activo', lastAccess: 'Hoy, 08:42' },
@@ -1392,18 +1502,29 @@ function AdminDashboard({ activities, rooms, templates, attempts, adminData, onN
   const completion = attempts.length ? Math.round((attempts.filter((attempt) => attempt.status === 'completed').length / attempts.length) * 100) : 0
   const users = adminData?.users ?? []
   const sourceRooms = adminData?.rooms ?? rooms
-  return <><PageIntro eyebrow="CONTROL DE LA PLATAFORMA" title="Resumen general" description="Supervisa usuarios, contenidos y evaluaciones desde la administración de EvaluEdu." action={<span className="tag published">{adminData ? 'Supabase conectado' : 'Cargando datos globales'}</span>} onHome={() => onNavigate('overview')} /><div className="admin-notice"><span>✓</span><div><b>{adminData ? 'Datos administrativos sincronizados.' : 'Cargando datos administrativos.'}</b><p>{adminData ? 'Usuarios, salas, auditoría e intentos se consultan desde Supabase con permisos de administrador.' : 'Mientras se consulta Supabase, se conserva la copia local como respaldo temporal.'}</p></div></div><div className="metric-grid admin-metrics"><Metric icon="♙" value={adminData?.metrics.users ?? users.length} label="Usuarios registrados" trend="Docentes y administración" tone="mint" /><Metric icon="⌘" value={activeRooms} label="Salas abiertas" trend={`${adminData?.metrics.rooms ?? sourceRooms.length} salas en total`} tone="lavender" /><Metric icon="◈" value={published} label="Actividades publicadas" trend={`${adminData?.metrics.templates ?? templates.length} plantillas guardadas`} tone="peach" /><Metric icon="✓" value={`${completion}%`} label="Intentos finalizados" trend={`${adminData?.metrics.attempts ?? attempts.length} registros`} tone="mint" /></div><div className="dashboard-grid admin-grid"><section className="panel"><div className="panel-heading"><div><h2>Usuarios y permisos</h2><p>{adminData ? 'Directorio real de Supabase.' : 'Directorio temporal de esta sesión.'}</p></div><button className="text-button" onClick={() => onNavigate('adminUsers')}>Ver usuarios →</button></div>{adminData ? users.slice(0, 4).map((user) => <div className="admin-user-row" key={user.id}><span className="admin-avatar">{user.displayName.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><div><b>{user.displayName}</b><small>{user.email}</small></div><span className="admin-role">{user.roles.map((item) => item === 'admin' ? 'Administrador' : 'Docente').join(' · ')}</span><span className="admin-status">{user.status}</span></div>) : demoAdminUsers.map((user) => <div className="admin-user-row" key={user.email}><span className="admin-avatar">{user.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><div><b>{user.name}</b><small>{user.email}</small></div><span className="admin-role">{user.role}</span><span className="admin-status">{user.status}</span></div>)}</section><section className="panel admin-health"><div className="panel-heading"><div><h2>Estado del sistema</h2><p>Indicadores de la instalación actual.</p></div></div><div className="health-line"><span className="health-dot local" /><div><b>Persistencia local</b><small>Respaldo temporal del navegador.</small></div><strong>Activa</strong></div><div className="health-line"><span className="health-dot ready" /><div><b>Supabase Auth</b><small>Sesiones y roles verificados.</small></div><strong>Activa</strong></div><div className="health-line"><span className="health-dot ready" /><div><b>RLS y Realtime</b><small>Permisos y estados de sala conectados.</small></div><strong>Activos</strong></div></section></div><section className="panel admin-quick-actions"><div><p className="eyebrow">ACCIONES DE CONTROL</p><h2>Revisión rápida</h2><p>Consulta las áreas sincronizadas con el backend.</p></div><div className="admin-action-grid"><button className="outline-button" onClick={() => onNavigate('rooms')}>⌘ Revisar salas</button><button className="outline-button" onClick={() => onNavigate('adminAudit')}>◌ Ver auditoría</button><button className="outline-button" onClick={() => onNavigate('results')}>↗ Revisar resultados</button></div></section></>
+  return <><PageIntro eyebrow="CONTROL DE LA PLATAFORMA" title="Resumen general" description="Supervisa usuarios, contenidos y evaluaciones desde la administración de EvaluEdu." action={<span className="tag published">{adminData ? 'Supabase conectado' : 'Cargando datos globales'}</span>} /><div className="admin-notice"><span>✓</span><div><b>{adminData ? 'Datos administrativos sincronizados.' : 'Cargando datos administrativos.'}</b><p>{adminData ? 'Usuarios, salas, auditoría e intentos se consultan desde Supabase con permisos de administrador.' : 'Mientras se consulta Supabase, se conserva la copia local como respaldo temporal.'}</p></div></div><div className="metric-grid admin-metrics"><Metric icon="♙" value={adminData?.metrics.users ?? users.length} label="Usuarios registrados" trend="Docentes y administración" tone="mint" /><Metric icon="⌘" value={activeRooms} label="Salas abiertas" trend={`${adminData?.metrics.rooms ?? sourceRooms.length} salas en total`} tone="lavender" /><Metric icon="◈" value={published} label="Actividades publicadas" trend={`${adminData?.metrics.templates ?? templates.length} plantillas guardadas`} tone="peach" /><Metric icon="✓" value={`${completion}%`} label="Intentos finalizados" trend={`${adminData?.metrics.attempts ?? attempts.length} registros`} tone="mint" /></div><div className="dashboard-grid admin-grid"><section className="panel"><div className="panel-heading"><div><h2>Usuarios y permisos</h2><p>{adminData ? 'Directorio real de Supabase.' : 'Directorio temporal de esta sesión.'}</p></div><button className="text-button" onClick={() => onNavigate('adminUsers')}>Ver usuarios →</button></div>{adminData ? users.slice(0, 4).map((user) => <div className="admin-user-row" key={user.id}><span className="admin-avatar">{user.displayName.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><div><b>{user.displayName}</b><small>{user.email}</small></div><span className="admin-role">{user.roles.map((item) => item === 'admin' ? 'Administrador' : 'Docente').join(' · ')}</span><span className="admin-status">{user.status}</span></div>) : demoAdminUsers.map((user) => <div className="admin-user-row" key={user.email}><span className="admin-avatar">{user.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><div><b>{user.name}</b><small>{user.email}</small></div><span className="admin-role">{user.role}</span><span className="admin-status">{user.status}</span></div>)}</section><section className="panel admin-health"><div className="panel-heading"><div><h2>Estado del sistema</h2><p>Indicadores de la instalación actual.</p></div></div><div className="health-line"><span className="health-dot local" /><div><b>Persistencia local</b><small>Respaldo temporal del navegador.</small></div><strong>Activa</strong></div><div className="health-line"><span className="health-dot ready" /><div><b>Supabase Auth</b><small>Sesiones y roles verificados.</small></div><strong>Activa</strong></div><div className="health-line"><span className="health-dot ready" /><div><b>RLS y Realtime</b><small>Permisos y estados de sala conectados.</small></div><strong>Activos</strong></div></section></div><section className="panel admin-quick-actions"><div><p className="eyebrow">ACCIONES DE CONTROL</p><h2>Revisión rápida</h2><p>Consulta las áreas sincronizadas con el backend.</p></div><div className="admin-action-grid"><button className="outline-button" onClick={() => onNavigate('rooms')}>⌘ Revisar salas</button><button className="outline-button" onClick={() => onNavigate('adminAudit')}>◌ Ver auditoría</button><button className="outline-button" onClick={() => onNavigate('results')}>↗ Revisar resultados</button></div></section></>
 }
 
 function AdminUsersView({ attempts, profile, adminData, onRefresh, onHome }: { attempts: StudentAttempt[]; profile: Profile | null; adminData: AdminSnapshot | null; onRefresh: () => void; onHome: () => void }) {
   const [showInvite, setShowInvite] = useState(false)
+  const [accessMode, setAccessMode] = useState<'pilot' | 'invite'>('pilot')
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [pilotPassword, setPilotPassword] = useState('')
+  const [pilotConfirmation, setPilotConfirmation] = useState('')
   const [status, setStatus] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [removingId, setRemovingId] = useState<string | null>(null)
   const [resendingId, setResendingId] = useState<string | null>(null)
   const canManageUsers = !isSupabaseConfigured || canAccessPanel(profile, 'admin')
+  const closeInviteModal = () => {
+    setShowInvite(false)
+    setAccessMode('pilot')
+    setEmail('')
+    setDisplayName('')
+    setPilotPassword('')
+    setPilotConfirmation('')
+  }
 
   const inviteTeacher = async (event: FormEvent) => {
     event.preventDefault()
@@ -1431,11 +1552,48 @@ function AdminUsersView({ attempts, profile, adminData, onRefresh, onHome }: { a
       setStatus({ kind: 'error', message: await functionErrorMessage(error, data, 'No se pudo enviar la invitación.') })
       return
     }
-    setShowInvite(false)
-    setEmail('')
-    setDisplayName('')
+    closeInviteModal()
     onRefresh()
     setStatus({ kind: 'success', message: `Invitación enviada a ${data.email}. El docente deberá completar su acceso desde el enlace recibido.` })
+  }
+
+  const createPilotTeacher = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!canManageUsers) {
+      setStatus({ kind: 'error', message: 'Tu perfil no tiene permisos de administrador para crear accesos piloto.' })
+      return
+    }
+    if (pilotPassword.length < 8) {
+      setStatus({ kind: 'error', message: 'La contraseña temporal debe tener al menos 8 caracteres.' })
+      return
+    }
+    if (pilotPassword !== pilotConfirmation) {
+      setStatus({ kind: 'error', message: 'Las contraseñas no coinciden.' })
+      return
+    }
+    if (!supabase) {
+      setStatus({ kind: 'error', message: 'Supabase no está configurado en este entorno.' })
+      return
+    }
+    setSaving(true)
+    setStatus(null)
+    const { data: refreshedSession, error: refreshError } = await supabase.auth.refreshSession()
+    if (refreshError || !refreshedSession.session) {
+      setSaving(false)
+      setStatus({ kind: 'error', message: 'Tu sesión expiró. Cierra sesión y vuelve a ingresar para continuar.' })
+      return
+    }
+    const { data, error } = await supabase.functions.invoke('admin-create-pilot-teacher', {
+      body: { email: email.trim(), displayName: displayName.trim(), password: pilotPassword },
+    })
+    setSaving(false)
+    if (error || !data?.ok) {
+      setStatus({ kind: 'error', message: await functionErrorMessage(error, data, 'No se pudo crear el acceso piloto.') })
+      return
+    }
+    closeInviteModal()
+    onRefresh()
+    setStatus({ kind: 'success', message: `${data.mode === 'activated' ? 'Acceso reactivado' : 'Acceso creado'} para ${data.email}. El docente puede ingresar con esa contraseña y cambiarla desde su perfil.` })
   }
 
   const removeUser = async (user: AdminUser) => {
@@ -1468,26 +1626,37 @@ function AdminUsersView({ attempts, profile, adminData, onRefresh, onHome }: { a
 
   const users = adminData?.users ?? []
   return <>
-    <PageIntro eyebrow="ADMINISTRACIÓN" title="Usuarios y permisos" description="Invita docentes autorizados y conserva la separación entre administración y enseñanza." action={canManageUsers ? <button className="primary-button" onClick={() => { setStatus(null); setShowInvite(true) }}>＋ Agregar usuario</button> : <span className="demo-admin-tag">Acceso de solo lectura</span>} onHome={onHome} />
-    <div className="admin-notice"><span>✓</span><div><b>Alta segura de docentes.</b><p>La invitación se valida en una función protegida. No se generan ni se envían contraseñas permanentes; cada persona establece su acceso desde el enlace de Supabase.</p></div></div>
+    <PageIntro eyebrow="ADMINISTRACIÓN" title="Usuarios y permisos" description="Invita docentes autorizados y conserva la separación entre administración y enseñanza." action={canManageUsers ? <button className="primary-button" onClick={() => { setStatus(null); setAccessMode('pilot'); setShowInvite(true) }}>＋ Agregar usuario</button> : <span className="demo-admin-tag">Acceso de solo lectura</span>} />
+    <div className="admin-notice"><span>✓</span><div><b>Alta segura de docentes.</b><p>Para pruebas piloto puedes crear o reactivar un acceso con contraseña sin depender del correo. La invitación por enlace sigue disponible para el flujo habitual.</p></div></div>
     {status && <div className={`auth-message ${status.kind}`}>{status.message}</div>}
     <section className="panel"><div className="panel-heading"><div><h2>Directorio de la plataforma</h2><p>{adminData ? `${users.length} usuarios registrados · ${attempts.length} intentos sincronizados` : 'Cargando usuarios desde Supabase…'}</p></div><span className="tag published">{adminData ? 'Supabase' : 'Respaldo local'}</span></div><div className="results-table-wrap"><table><thead><tr><th>Persona</th><th>Rol</th><th>Estado</th><th>Último acceso</th><th>Acceso previsto</th><th>Acción</th></tr></thead><tbody>{users.length ? users.map((user) => <tr key={user.id}><td><b>{user.displayName}</b><small>{user.email}</small></td><td>{user.roles.map((item) => item === 'admin' ? 'Administrador' : 'Docente').join(' · ')}</td><td><span className="result-status">{user.status}</span></td><td>{user.lastSignInAt ? formatDate(user.lastSignInAt) : 'Aún no'}</td><td>{user.roles.includes('admin') ? 'Global' : 'Su institución'}</td><td>{user.roles.includes('admin') ? <span className="muted">Protegido</span> : user.status === 'Bloqueado' ? <span className="muted">Desactivado</span> : <div className="table-actions"><button className="text-button" disabled={resendingId === user.id} onClick={() => void resendAccess(user)}>{resendingId === user.id ? 'Enviando…' : user.status === 'Pendiente' ? 'Reenviar acceso' : 'Restablecer acceso'}</button><button className="text-button danger-text-button" disabled={removingId === user.id} onClick={() => void removeUser(user)}>{removingId === user.id ? 'Desactivando…' : 'Desactivar usuario'}</button></div>}</td></tr>) : <tr><td colSpan={6}>Aún no hay perfiles administrativos para mostrar.</td></tr>}</tbody></table></div></section>
     <section className="panel admin-permission-grid"><div><p className="eyebrow">MODELO DE PERMISOS</p><h2>Separación de responsabilidades</h2></div><div className="permission-card"><b>Administrador</b><span>Usuarios, instituciones, auditoría y configuración global.</span></div><div className="permission-card"><b>Docente</b><span>Sus plantillas, salas, actividades y resultados privados.</span></div><div className="permission-card"><b>Estudiante</b><span>Solo las salas autorizadas y su participación actual.</span></div></section>
-    {showInvite && <div className="modal-backdrop"><div className="modal-card admin-invite-modal"><div className="modal-head"><div><p className="eyebrow">NUEVO ACCESO</p><h2>Invitar docente</h2><p className="modal-subtitle">El correo recibirá un enlace para crear su acceso seguro.</p></div><button type="button" className="icon-button" onClick={() => setShowInvite(false)}>×</button></div><form className="auth-form" onSubmit={inviteTeacher}><label>Nombre visible<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Ej. Lucía Martínez" minLength={2} required /></label><label>Correo del docente<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="docente@institucion.edu" required /></label><div className="auth-message success">El rol se asignará como docente. Los administradores no se crean desde esta pantalla.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowInvite(false)}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Enviando…' : 'Enviar invitación →'}</button></div></form></div></div>}
+    {showInvite && <div className="modal-backdrop"><div className="modal-card admin-invite-modal"><div className="modal-head"><div><p className="eyebrow">NUEVO ACCESO</p><h2>{accessMode === 'pilot' ? 'Crear acceso piloto' : 'Invitar docente'}</h2><p className="modal-subtitle">{accessMode === 'pilot' ? 'El docente podrá ingresar de inmediato con una contraseña definida por administración.' : 'El correo recibirá un enlace para crear su acceso seguro.'}</p></div><button type="button" className="icon-button" onClick={closeInviteModal}>×</button></div><div className="access-mode-toggle" role="tablist" aria-label="Tipo de acceso"><button type="button" className={accessMode === 'pilot' ? 'primary-button' : 'outline-button'} onClick={() => { setStatus(null); setAccessMode('pilot') }}>Acceso piloto</button><button type="button" className={accessMode === 'invite' ? 'primary-button' : 'outline-button'} onClick={() => { setStatus(null); setAccessMode('invite') }}>Invitar por correo</button></div><form className="auth-form" onSubmit={accessMode === 'pilot' ? createPilotTeacher : inviteTeacher}><label>Nombre visible<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Ej. Lucía Martínez" minLength={2} required /></label><label>Correo del docente<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="docente@institucion.edu" required /></label>{accessMode === 'pilot' ? <><label>Contraseña temporal<input type="password" value={pilotPassword} onChange={(event) => setPilotPassword(event.target.value)} placeholder="Mínimo 8 caracteres" minLength={8} autoComplete="new-password" required /></label><label>Repetir contraseña<input type="password" value={pilotConfirmation} onChange={(event) => setPilotConfirmation(event.target.value)} placeholder="Repite la contraseña" minLength={8} autoComplete="new-password" required /></label><div className="auth-message success">Se confirma el correo automáticamente y se habilita el rol docente. Comparte la contraseña por un canal seguro; el docente podrá cambiarla al entrar.</div></> : <div className="auth-message success">El rol se asignará como docente. Los administradores no se crean desde esta pantalla.</div>}<div className="modal-actions"><button type="button" className="outline-button" onClick={closeInviteModal}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? accessMode === 'pilot' ? 'Creando…' : 'Enviando…' : accessMode === 'pilot' ? 'Crear acceso →' : 'Enviar invitación →'}</button></div></form></div></div>}
   </>
 }
 
-function AdminAuditView({ attempts, rooms, adminData, onHome }: { attempts: StudentAttempt[]; rooms: Room[]; adminData: AdminSnapshot | null; onHome: () => void }) { const events = adminData ? adminData.auditEvents.map((event) => ({ type: event.eventType, subject: event.actorName, room: event.roomName, at: event.createdAt, detail: '' })) : attempts.flatMap((attempt) => attempt.events.map((event) => ({ ...event, subject: attempt.studentName, room: attempt.roomName }))).sort((left, right) => right.at.localeCompare(left.at)); return <><PageIntro eyebrow="ADMINISTRACIÓN" title="Auditoría de actividad" description="Registro de eventos relevantes para revisar trazabilidad y seguridad." action={<span className="tag published">{adminData ? 'Solo lectura · Servidor' : 'Cargando auditoría'}</span>} onHome={onHome} /><div className="admin-notice"><span>{adminData ? '✓' : '!'}</span><div><b>{adminData ? 'Auditoría sincronizada con Supabase.' : 'Cargando auditoría del servidor.'}</b><p>{adminData ? 'Los eventos se leen desde el registro protegido de la plataforma.' : 'Mientras carga, se conserva la trazabilidad local como respaldo temporal.'}</p></div></div><section className="panel"><div className="panel-heading"><div><h2>Eventos recientes</h2><p>{events.length} eventos registrados · {adminData?.metrics.rooms ?? rooms.length} salas visibles</p></div></div>{events.length ? <div className="audit-list">{events.slice(0, 20).map((event, index) => <div className="audit-row" key={`${event.at}-${index}`}><span className="audit-icon">{event.type === 'finished' ? '✓' : event.type === 'timeout' ? '◷' : event.type === 'omitted' ? '→' : '•'}</span><div><b>{auditEventLabel(event.type)}</b><small>{event.subject} · {event.room}{event.detail ? ` · ${event.detail}` : ''}</small></div><time>{formatDate(event.at)}</time></div>)}</div> : <div className="results-empty"><span>◌</span><h3>Aún no hay eventos</h3><p>Los eventos aparecerán cuando un estudiante ingrese y responda una evaluación.</p></div>}</section></> }
+function AdminAuditView({ attempts, rooms, adminData, onHome }: { attempts: StudentAttempt[]; rooms: Room[]; adminData: AdminSnapshot | null; onHome: () => void }) { const events = adminData ? adminData.auditEvents.map((event) => ({ type: event.eventType, subject: event.actorName, room: event.roomName, at: event.createdAt, detail: '' })) : attempts.flatMap((attempt) => attempt.events.map((event) => ({ ...event, subject: attempt.studentName, room: attempt.roomName }))).sort((left, right) => right.at.localeCompare(left.at)); return <><PageIntro eyebrow="ADMINISTRACIÓN" title="Auditoría de actividad" description="Registro de eventos relevantes para revisar trazabilidad y seguridad." action={<span className="tag published">{adminData ? 'Solo lectura · Servidor' : 'Cargando auditoría'}</span>} /><div className="admin-notice"><span>{adminData ? '✓' : '!'}</span><div><b>{adminData ? 'Auditoría sincronizada con Supabase.' : 'Cargando auditoría del servidor.'}</b><p>{adminData ? 'Los eventos se leen desde el registro protegido de la plataforma.' : 'Mientras carga, se conserva la trazabilidad local como respaldo temporal.'}</p></div></div><section className="panel"><div className="panel-heading"><div><h2>Eventos recientes</h2><p>{events.length} eventos registrados · {adminData?.metrics.rooms ?? rooms.length} salas visibles</p></div></div>{events.length ? <div className="audit-list">{events.slice(0, 20).map((event, index) => <div className="audit-row" key={`${event.at}-${index}`}><span className="audit-icon">{event.type === 'finished' ? '✓' : event.type === 'timeout' ? '◷' : event.type === 'omitted' ? '→' : '•'}</span><div><b>{auditEventLabel(event.type)}</b><small>{event.subject} · {event.room}{event.detail ? ` · ${event.detail}` : ''}</small></div><time>{formatDate(event.at)}</time></div>)}</div> : <div className="results-empty"><span>◌</span><h3>Aún no hay eventos</h3><p>Los eventos aparecerán cuando un estudiante ingrese y responda una evaluación.</p></div>}</section></> }
 
-function AdminRoomsView({ rooms, activities, adminData, onHome }: { rooms: Room[]; activities: Activity[]; adminData: AdminSnapshot | null; onHome: () => void }) { const globalRooms = adminData?.rooms ?? []; return <><PageIntro eyebrow="ADMINISTRACIÓN" title="Salas globales" description="Supervisa el ciclo de las evaluaciones sin modificar la configuración del docente." action={<span className="tag published">{adminData ? 'Solo lectura · Supabase' : 'Cargando salas'}</span>} onHome={onHome} /><div className="admin-notice"><span>{adminData ? '✓' : '!'}</span><div><b>{adminData ? 'Vista global sincronizada.' : 'Cargando salas globales.'}</b><p>{adminData ? 'La administración puede supervisar las salas de todos los docentes sin modificar su configuración.' : 'La copia local se mantiene disponible mientras se consulta el servidor.'}</p></div></div><section className="panel"><div className="panel-heading"><div><h2>{adminData ? globalRooms.length : rooms.length} salas visibles</h2><p>Las salas archivadas conservan su trazabilidad y resultados.</p></div></div><div className="results-table-wrap"><table><thead><tr><th>Sala</th><th>Docente</th><th>Código</th><th>Estado</th><th>Preguntas</th><th>Estudiantes</th><th>Actividades</th></tr></thead><tbody>{adminData ? globalRooms.map((room) => <tr key={room.id}><td><b>{room.name}</b><small>{formatDate(room.createdAt)}</small></td><td>{room.ownerName}</td><td>{room.code}</td><td><span className={`result-status ${room.status === 'active' ? '' : 'timeout'}`}>{roomStatusLabel(room.status)}</span></td><td>{room.questionCount}</td><td>Máx. {room.limit}</td><td>{room.activities.map((activity) => activity.title).join(' · ') || 'Sin actividades'}</td></tr>) : rooms.map((room) => <tr key={room.id}><td><b>{room.name}</b><small>{room.instructions}</small></td><td>Docente local</td><td>{room.code}</td><td><span className={`result-status ${room.status === 'active' ? '' : 'timeout'}`}>{roomStatusLabel(room.status)}</span></td><td>{room.questionCount}</td><td>Máx. {room.limit}</td><td>{room.activities.map((id) => activities.find((activity) => activity.id === id)?.title ?? 'Actividad').join(' · ')}</td></tr>)}</tbody></table></div></section></> }
+function AdminRoomsView({ rooms, activities, adminData, onHome }: { rooms: Room[]; activities: Activity[]; adminData: AdminSnapshot | null; onHome: () => void }) { const globalRooms = adminData?.rooms ?? []; return <><PageIntro eyebrow="ADMINISTRACIÓN" title="Salas globales" description="Supervisa el ciclo de las evaluaciones sin modificar la configuración del docente." action={<span className="tag published">{adminData ? 'Solo lectura · Supabase' : 'Cargando salas'}</span>} /><div className="admin-notice"><span>{adminData ? '✓' : '!'}</span><div><b>{adminData ? 'Vista global sincronizada.' : 'Cargando salas globales.'}</b><p>{adminData ? 'La administración puede supervisar las salas de todos los docentes sin modificar su configuración.' : 'La copia local se mantiene disponible mientras se consulta el servidor.'}</p></div></div><section className="panel"><div className="panel-heading"><div><h2>{adminData ? globalRooms.length : rooms.length} salas visibles</h2><p>Las salas archivadas conservan su trazabilidad y resultados.</p></div></div><div className="results-table-wrap"><table><thead><tr><th>Sala</th><th>Docente</th><th>Código</th><th>Estado</th><th>Preguntas</th><th>Estudiantes</th><th>Actividades</th></tr></thead><tbody>{adminData ? globalRooms.map((room) => <tr key={room.id}><td><b>{room.name}</b><small>{formatDate(room.createdAt)}</small></td><td>{room.ownerName}</td><td>{room.code}</td><td><span className={`result-status ${room.status === 'active' ? '' : 'timeout'}`}>{roomStatusLabel(room.status)}</span></td><td>{room.questionCount}</td><td>Máx. {room.limit}</td><td>{room.activities.map((activity) => activity.title).join(' · ') || 'Sin actividades'}</td></tr>) : rooms.map((room) => <tr key={room.id}><td><b>{room.name}</b><small>{room.instructions}</small></td><td>Docente local</td><td>{room.code}</td><td><span className={`result-status ${room.status === 'active' ? '' : 'timeout'}`}>{roomStatusLabel(room.status)}</span></td><td>{room.questionCount}</td><td>Máx. {room.limit}</td><td>{room.activities.map((id) => activities.find((activity) => activity.id === id)?.title ?? 'Actividad').join(' · ')}</td></tr>)}</tbody></table></div></section></> }
 
-function Overview({ activities, rooms, pending, onNavigate, onSelect, firstName, todayLabel }: { activities: Activity[]; rooms: Room[]; pending: Activity[]; onNavigate: (view: View) => void; onSelect: (activity: Activity) => void; firstName: string; todayLabel: string }) { return <><PageIntro eyebrow={todayLabel.toUpperCase()} title={`Buenos días, ${firstName}`} description="Un vistazo claro para preparar experiencias que hagan pensar." action={<button className="primary-button" onClick={() => onNavigate('content')}>＋ Crear actividad</button>} onHome={() => onNavigate('overview')} /><section className="metric-grid"><Metric icon="◈" value={activities.filter((item) => item.status === 'published').length} label="Actividades publicadas" trend="Disponibles para reutilizar" tone="mint" /><Metric icon="⌘" value={rooms.filter((item) => !['finished', 'archived'].includes(item.status)).length} label="Salas activas" trend="Preparadas o en curso" tone="lavender" /><Metric icon="◌" value={pending.length} label="Por revisar" trend="Requieren tu atención" tone="peach" /></section><div className="dashboard-grid"><section className="panel activity-panel"><div className="panel-heading"><div><h2>Actividad reciente</h2><p>Lo que está pasando en tus clases.</p></div><button className="text-button" onClick={() => onNavigate('results')}>Ver resultados →</button></div>{rooms.slice(0, 2).map((room) => <div className="activity-row" key={room.id}><span className="row-icon room">⌘</span><div><b>{room.name}</b><small>{roomStatusLabel(room.status)} · código {room.code}</small></div><strong>{room.activities.length} activ.</strong></div>)}<div className="activity-row"><span className="row-icon check">✓</span><div><b>Contenido listo para usar</b><small>{activities.length} actividades en tu biblioteca</small></div><strong>Biblioteca</strong></div></section><section className="panel tip-panel"><span className="tip-spark">✦</span><p className="eyebrow">SUGERENCIA DE HOY</p><h2>Combina formatos</h2><p>Una sala con decisión, clasificación y reflexión ayuda a observar distintos tipos de razonamiento.</p><button className="outline-button" onClick={() => onNavigate('rooms')}>Crear una sala →</button></section></div><section className="section-block"><div className="section-heading"><div><p className="eyebrow">TU BIBLIOTECA</p><h2>Actividades destacadas</h2></div><button className="text-button" onClick={() => onNavigate('content')}>Ver todas →</button></div>{activities.length ? <div className="activity-cards">{activities.slice(0, 3).map((activity) => <ActivityCard key={activity.id} activity={activity} onOpen={() => onSelect(activity)} />)}</div> : <div className="empty-state"><span>◈</span><h2>Crea tu primera actividad</h2><p>Empieza con una plantilla para generar actividades que puedas reutilizar en tus salas.</p><button className="primary-button" onClick={() => onNavigate('content')}>Ir a Contenido</button></div>}</section></> }
+function Overview({ activities, rooms, pending, onNavigate, onSelect, firstName, todayLabel }: { activities: Activity[]; rooms: Room[]; pending: Activity[]; onNavigate: (view: View) => void; onSelect: (activity: Activity) => void; firstName: string; todayLabel: string }) { return <><PageIntro eyebrow={todayLabel.toUpperCase()} title={`Buenos días, ${firstName}`} description="Un vistazo claro para preparar experiencias que hagan pensar." action={<button className="primary-button" onClick={() => onNavigate('content')}>＋ Crear actividad</button>} /><section className="metric-grid"><Metric icon="◈" value={activities.filter((item) => item.status === 'published').length} label="Actividades publicadas" trend="Disponibles para reutilizar" tone="mint" /><Metric icon="⌘" value={rooms.filter((item) => !['finished', 'archived'].includes(item.status)).length} label="Salas activas" trend="Preparadas o en curso" tone="lavender" /><Metric icon="◌" value={pending.length} label="Por revisar" trend="Requieren tu atención" tone="peach" /></section><div className="dashboard-grid"><section className="panel activity-panel"><div className="panel-heading"><div><h2>Actividad reciente</h2><p>Lo que está pasando en tus clases.</p></div><button className="text-button" onClick={() => onNavigate('results')}>Ver resultados →</button></div>{rooms.slice(0, 2).map((room) => <div className="activity-row" key={room.id}><span className="row-icon room">⌘</span><div><b>{room.name}</b><small>{roomStatusLabel(room.status)} · código {room.code}</small></div><strong>{room.activities.length} activ.</strong></div>)}<div className="activity-row"><span className="row-icon check">✓</span><div><b>Contenido listo para usar</b><small>{activities.length} actividades en tu biblioteca</small></div><strong>Biblioteca</strong></div></section><section className="panel tip-panel"><span className="tip-spark">✦</span><p className="eyebrow">SUGERENCIA DE HOY</p><h2>Combina formatos</h2><p>Una sala con decisión, clasificación y reflexión ayuda a observar distintos tipos de razonamiento.</p><button className="outline-button" onClick={() => onNavigate('rooms')}>Crear una sala →</button></section></div><section className="section-block"><div className="section-heading"><div><p className="eyebrow">TU BIBLIOTECA</p><h2>Actividades destacadas</h2></div><button className="text-button" onClick={() => onNavigate('content')}>Ver todas →</button></div>{activities.length ? <div className="activity-cards">{activities.slice(0, 3).map((activity) => <ActivityCard key={activity.id} activity={activity} onOpen={() => onSelect(activity)} />)}</div> : <div className="empty-state"><span>◈</span><h2>Crea tu primera actividad</h2><p>Empieza con una plantilla para generar actividades que puedas reutilizar en tus salas.</p><button className="primary-button" onClick={() => onNavigate('content')}>Ir a Contenido</button></div>}</section></> }
 
 function Metric({ icon, value, label, trend, tone }: { icon: string; value: number | string; label: string; trend: string; tone: string }) { return <div className={`metric-card ${tone}`}><span className="metric-icon">{icon}</span><strong>{value}</strong><b>{label}</b><small>{trend}</small></div> }
-function PageIntro({ eyebrow, title, description, action, onHome }: { eyebrow: string; title: string; description: string; action?: React.ReactNode; onHome?: () => void }) { const homeProps = onHome ? { className: 'page-intro-copy page-intro-home-link', role: 'button' as const, tabIndex: 0, title: 'Volver al inicio', onClick: onHome, onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onHome() } } } : { className: 'page-intro-copy' }; return <div className="page-intro"><div {...homeProps}><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action}</div> }
-function ActivityCard({ activity, onOpen }: { activity: Activity; onOpen?: () => void }) { return <button type="button" className="activity-card" onClick={onOpen}><div className={`activity-type type-${activity.type}`}><span>{types[activity.type].icon}</span><small>{types[activity.type].label}</small></div><h3>{activity.title}</h3><p>{activity.topic} · {activity.difficulty}</p><div className="card-footer"><span className={`status-dot ${activity.status}`} />{activity.status === 'published' ? 'Publicada' : activity.status === 'pending' ? 'Por revisar' : 'Borrador'}<span className="card-arrow">↗</span></div></button> }
+function PageIntro({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode; onHome?: () => void }) {
+  return (
+    <div className="page-intro">
+      <div className="page-intro-copy">
+        <p className="eyebrow">{eyebrow}</p>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+      {action}
+    </div>
+  )
+}
+function ActivityCard({ activity, onOpen }: { activity: Activity; onOpen?: () => void }) { return <button type="button" className="activity-card" onClick={onOpen}><div className={`activity-type type-${activity.type}`}><span>{types[activity.type].icon}</span><small>{types[activity.type].label}</small></div><h3>{activity.title}</h3><p>{activity.topic}</p><div className="card-footer"><span className={`status-dot ${activity.status}`} />{activity.status === 'published' ? 'Publicada' : activity.status === 'pending' ? 'Por revisar' : 'Borrador'}<span className="card-arrow">↗</span></div></button> }
 
-function ActivityPreview({ activity, onClose, onDelete }: { activity: Activity; onClose: () => void; onDelete?: () => void }) { const reusable = activity.status === 'published'; return <div className="modal-backdrop"><div className="modal-card"><div className="modal-head"><div><p className="eyebrow">VISTA DE ACTIVIDAD</p><h2>{activity.title}</h2><p className="modal-subtitle">{types[activity.type].label} · {activity.topic} · {activity.difficulty}</p></div><button type="button" className="icon-button" onClick={onClose}>×</button></div><div className="admin-notice"><span>{reusable ? '✓' : '!'}</span><div><b>{reusable ? 'Lista para reutilizar' : 'Pendiente de publicación'}</b><p>{reusable ? 'Esta actividad puede seleccionarse nuevamente al crear una sala.' : 'Aprueba esta actividad desde Propuestas para incluirla en una nueva sala.'}</p></div></div><p>{activity.prompt}</p>{activity.options?.length ? <div className="activity-check-list">{activity.options.map((option, index) => <div className="activity-check" key={`${activity.id}-option-${index}`}><span className="list-type">{index + 1}</span><span><b>{option}</b></span></div>)}</div> : null}<div className="modal-actions">{onDelete && <button type="button" className="outline-button danger-button" onClick={onDelete}>Eliminar actividad</button>}<button type="button" className="primary-button" onClick={onClose}>Cerrar</button></div></div></div> }
+function ActivityPreview({ activity, onClose, onDelete }: { activity: Activity; onClose: () => void; onDelete?: () => void }) { const reusable = activity.status === 'published'; return <div className="modal-backdrop"><div className="modal-card"><div className="modal-head"><div><p className="eyebrow">VISTA DE ACTIVIDAD</p><h2>{activity.title}</h2><p className="modal-subtitle">{types[activity.type].label} · {activity.topic}</p></div><button type="button" className="icon-button" onClick={onClose}>×</button></div><div className="admin-notice"><span>{reusable ? '✓' : '!'}</span><div><b>{reusable ? 'Lista para reutilizar' : 'Pendiente de publicación'}</b><p>{reusable ? 'Esta actividad puede seleccionarse nuevamente al crear una sala.' : 'Aprueba esta actividad desde Propuestas para incluirla en una nueva sala.'}</p></div></div><p>{activity.prompt}</p>{activity.options?.length ? <div className="activity-check-list">{activity.options.map((option, index) => <div className="activity-check" key={`${activity.id}-option-${index}`}><span className="list-type">{index + 1}</span><span><b>{option}</b></span></div>)}</div> : null}<div className="modal-actions">{onDelete && <button type="button" className="outline-button danger-button" onClick={onDelete}>Eliminar actividad</button>}<button type="button" className="primary-button" onClick={onClose}>Cerrar</button></div></div></div> }
 
 function ContentView({ templates, activities, onCreateTemplate, onCreate, onImport, onSelect, onHome }: { templates: EvaluationTemplate[]; activities: Activity[]; onCreateTemplate: (template: EvaluationTemplate) => void; onCreate: (activity: Activity) => void; onImport: (document: ContentImportDocument) => void; onSelect: (activity: Activity) => void; onHome: () => void }) {
   const [tab, setTab] = useState<'all' | ActivityType>('all')
@@ -1499,7 +1668,7 @@ function ContentView({ templates, activities, onCreateTemplate, onCreate, onImpo
   const filtered = tab === 'all' ? activities : activities.filter((item) => item.type === tab)
   const hasSavedDraft = Boolean(readStorage<Partial<EvaluationTemplate> | null>('edueval-template-draft', null)?.title || readStorage<Partial<EvaluationTemplate> | null>('edueval-template-draft', null)?.subject)
   return <>
-    <PageIntro eyebrow="BIBLIOTECA DE CONTENIDO" title="Crea experiencias que importan" description="Aprueba una plantilla y EvaluEdu generará las actividades compatibles para evaluar ese contenido." action={<div className="content-actions"><button className="outline-button" onClick={() => setShowJsonImport(true)}>⇧ Importar JSON</button><button className="outline-button" onClick={() => setShowTemplateForm(true)}>＋ Nueva plantilla</button><button className="primary-button" onClick={() => { setRequestedType(null); setShowActivityPicker(true) }}>＋ Nueva actividad</button></div>} onHome={onHome} />
+    <PageIntro eyebrow="BIBLIOTECA DE CONTENIDO" title="Crea experiencias que importan" description="Aprueba una plantilla y EvaluEdu generará las actividades compatibles para evaluar ese contenido." action={<div className="content-actions"><button className="outline-button" onClick={() => setShowJsonImport(true)}>⇧ Importar JSON</button><button className="outline-button" onClick={() => setShowTemplateForm(true)}>＋ Nueva plantilla</button><button className="primary-button" onClick={() => { setRequestedType(null); setShowActivityPicker(true) }}>＋ Nueva actividad</button></div>} />
     <section className="template-section"><div className="section-heading"><div><p className="eyebrow">MODELO PEDAGÓGICO</p><h2>Plantillas de contenido</h2></div><span className="muted">La fuente de tus actividades</span></div>{hasSavedDraft && <div className="admin-notice"><span>✎</span><div><b>Tienes un borrador pendiente.</b><p>Continúa la plantilla guardada automáticamente para terminarla y aceptarla.</p></div><button className="outline-button" onClick={() => setShowTemplateForm(true)}>Continuar borrador</button></div>}{templates.length ? <div className="template-list">{templates.map((template) => <TemplateCard key={template.id} template={template} />)}</div> : <div className="template-empty"><span>◎</span><div><b>Aún no tienes una plantilla estructurada</b><p>Define objetivos, conceptos, situaciones y procesos para que EvaluEdu pueda habilitar los formatos adecuados.</p></div><button className="outline-button" onClick={() => setShowTemplateForm(true)}>Crear la primera</button></div>}</section>
     <div className="type-grid">{Object.entries(types).map(([key, value]) => <button key={key} className="type-tile" onClick={() => { setTab(key as ActivityType); setRequestedType(key as ActivityType); setShowActivityPicker(true) }}><span>{value.icon}</span><b>{value.label}</b><small>{value.description}</small></button>)}</div>
     <div className="library-toolbar"><div className="tabs"><button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>Todas <span>{activities.length}</span></button>{Object.entries(types).slice(0, 3).map(([key, value]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key as ActivityType)}>{value.label}</button>)}</div><span className="muted">Guardado local automático</span></div>
@@ -1555,21 +1724,21 @@ function buildActivitiesFromTemplate(template: EvaluationTemplate): Activity[] {
   const definitions = concepts.map((item) => `${item.name} → ${item.definition}`)
   const generated = (type: ActivityType, title: string, prompt: string, options: string[], answer: string | string[], feedback: string): Activity => ({ id: `a${Date.now()}-${type}`, templateId: template.id, title, type, topic: template.subject, difficulty: template.difficulty, prompt, options, answer, feedback, status: 'published' })
   const activities: Activity[] = []
-  if (matches.scenario.available && firstSituation) activities.push(generated('scenario', `${template.title} · Decisión`, firstSituation.context, [firstSituation.decision, 'Analizar otra alternativa antes de decidir', 'Ignorar las consecuencias'], firstSituation.decision, firstSituation.consequence))
   if (matches.trueFalse.available) activities.push(generated('trueFalse', `${template.title} · Comprueba`, concepts[0] ? `${concepts[0].name}: ${concepts[0].definition}` : firstSituation.context, ['Verdadero', 'Falso'], 'Verdadero', 'Relaciona tu respuesta con el objetivo y revisa la evidencia del contenido.'))
+  if (matches.singleChoice.available) activities.push(generated('singleChoice', `${template.title} · Elige`, 'Selecciona la opción que mejor representa el contenido aprendido.', conceptOptions.length ? [...conceptOptions, 'Ninguna de las anteriores'] : [firstSituation?.decision ?? 'Revisar el contenido'], conceptOptions[0] ?? firstSituation?.decision ?? '', 'Explica por qué esa opción se relaciona con el objetivo de aprendizaje.'))
   if (matches.matching.available) activities.push(generated('matching', `${template.title} · Relaciona`, 'Relaciona cada concepto con su definición.', definitions, definitions, 'Las relaciones se construyen a partir de las definiciones de la plantilla.'))
   if (matches.sorting.available) activities.push(generated('sorting', `${template.title} · Clasifica`, 'Clasifica los elementos del contenido en las categorías definidas.', conceptOptions, categories, 'La clasificación permite observar cómo se organiza el contenido.'))
   if (matches.ordering.available) activities.push(generated('ordering', `${template.title} · Ordena`, 'Ordena los pasos del proceso según la secuencia del contenido.', steps, steps, 'La secuencia debe seguir la lógica del proceso trabajado.'))
-  if (matches.singleChoice.available) activities.push(generated('singleChoice', `${template.title} · Elige`, 'Selecciona la opción que mejor representa el contenido aprendido.', conceptOptions.length ? [...conceptOptions, 'Ninguna de las anteriores'] : [firstSituation?.decision ?? 'Revisar el contenido'], conceptOptions[0] ?? firstSituation?.decision ?? '', 'Explica por qué esa opción se relaciona con el objetivo de aprendizaje.'))
+  if (matches.scenario.available && firstSituation) activities.push(generated('scenario', `${template.title} · Decisión`, firstSituation.context, [firstSituation.decision, 'Analizar otra alternativa antes de decidir', 'Ignorar las consecuencias'], firstSituation.decision, firstSituation.consequence))
   return activities
 }
 
 function TemplateActivityPicker({ templates, requestedType, onCancel, onSelect }: { templates: EvaluationTemplate[]; requestedType: ActivityType | null; onCancel: () => void; onSelect: (template: EvaluationTemplate, type: ActivityType) => void }) {
   const accepted = templates.filter((template) => template.status === 'accepted')
-  return <div className="modal-backdrop"><div className="modal-card activity-picker"><div className="modal-head"><div><p className="eyebrow">CREAR DESDE CONTENIDO</p><h2>Elige una plantilla</h2><p className="modal-subtitle">La actividad se construirá a partir del contenido que ya aprobaste.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div>{accepted.length ? <div className="picker-list">{accepted.map((template) => { const matches = compatibility(template); const available = Object.entries(types).filter(([key]) => matches[key as ActivityType].available && (!requestedType || key === requestedType)); return <article className="picker-card" key={template.id}><div><p className="eyebrow">PLANTILLA ACEPTADA</p><h3>{template.title}</h3><small>{template.subject} · {template.difficulty}</small></div><div className="picker-types">{available.length ? available.map(([key, value]) => <button key={key} className="picker-type" onClick={() => onSelect(template, key as ActivityType)}><span>{value.icon}</span><b>{value.label}</b><small>Usar este contenido</small></button>) : <div className="picker-unavailable">{requestedType ? `Esta plantilla todavía no tiene información suficiente para ${types[requestedType].label.toLowerCase()}.` : 'Esta plantilla no tiene formatos compatibles.'}</div>}</div></article> })}</div> : <div className="empty-state"><span>◎</span><h2>Primero acepta una plantilla</h2><p>Las actividades se crean desde una plantilla de contenido aprobada.</p></div>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button></div></div></div>
+  return <div className="modal-backdrop"><div className="modal-card activity-picker"><div className="modal-head"><div><p className="eyebrow">CREAR DESDE CONTENIDO</p><h2>Elige una plantilla</h2><p className="modal-subtitle">La actividad se construirá a partir del contenido que ya aprobaste.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div>{accepted.length ? <div className="picker-list">{accepted.map((template) => { const matches = compatibility(template); const available = Object.entries(types).filter(([key]) => matches[key as ActivityType].available && (!requestedType || key === requestedType)); return <article className="picker-card" key={template.id}><div><p className="eyebrow">PLANTILLA ACEPTADA</p><h3>{template.title}</h3><small>{template.subject}</small></div><div className="picker-types">{available.length ? available.map(([key, value]) => <button key={key} className="picker-type" onClick={() => onSelect(template, key as ActivityType)}><span>{value.icon}</span><b>{value.label}</b><small>Usar este contenido</small></button>) : <div className="picker-unavailable">{requestedType ? `Esta plantilla todavía no tiene información suficiente para ${types[requestedType].label.toLowerCase()}.` : 'Esta plantilla no tiene formatos compatibles.'}</div>}</div></article> })}</div> : <div className="empty-state"><span>◎</span><h2>Primero acepta una plantilla</h2><p>Las actividades se crean desde una plantilla de contenido aprobada.</p></div>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button></div></div></div>
 }
 
-function TemplateCard({ template }: { template: EvaluationTemplate }) { const matches = compatibility(template); const imported = template.source === 'json'; return <article className="template-card"><div className="template-card-head"><div><p className="eyebrow">{imported ? 'IMPORTADO · REVISIÓN PENDIENTE' : template.status === 'accepted' ? 'CONTENIDO ACEPTADO' : 'BORRADOR'}</p><h3>{template.title || 'Sin título'}</h3><p>{template.subject || 'Sin asignatura'} · {template.difficulty}</p></div><span className={`tag ${template.status === 'accepted' ? 'published' : 'draft'}`}>{imported ? 'Importado' : template.status === 'accepted' ? 'Aceptada' : 'Borrador'}</span></div><p className="template-description">{template.description || 'Sin descripción todavía.'}</p><div className="template-stats"><span>{template.concepts.length} conceptos</span><span>{template.situations.length} situaciones</span><span>{template.processSteps.length} pasos</span></div>{template.status === 'accepted' && <div className="generated-note">{imported ? '◌ Las actividades compatibles quedaron como propuestas para revisión docente.' : '✓ Las actividades compatibles se crearon automáticamente desde esta plantilla.'}</div>}<div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? imported ? 'Propuesta para revisar' : 'Actividad creada' : item.reason}</small></div> })}</div></article> }
+function TemplateCard({ template }: { template: EvaluationTemplate }) { const matches = compatibility(template); const imported = template.source === 'json'; return <article className="template-card"><div className="template-card-head"><div><p className="eyebrow">{imported ? 'IMPORTADO · REVISIÓN PENDIENTE' : template.status === 'accepted' ? 'CONTENIDO ACEPTADO' : 'BORRADOR'}</p><h3>{template.title || 'Sin título'}</h3><p>{template.subject || 'Sin asignatura'}</p></div><span className={`tag ${template.status === 'accepted' ? 'published' : 'draft'}`}>{imported ? 'Importado' : template.status === 'accepted' ? 'Aceptada' : 'Borrador'}</span></div><p className="template-description">{template.description || 'Sin descripción todavía.'}</p><div className="template-stats"><span>{template.concepts.length} conceptos</span><span>{template.situations.length} situaciones</span><span>{template.processSteps.length} pasos</span></div>{template.status === 'accepted' && <div className="generated-note">{imported ? '◌ Las actividades compatibles quedaron como propuestas para revisión docente.' : '✓ Las actividades compatibles se crearon automáticamente desde esta plantilla.'}</div>}<div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? imported ? 'Propuesta para revisar' : 'Actividad creada' : item.reason}</small></div> })}</div></article> }
 
 
 type TemplateProgress = { percent: number; completed: number; total: number; checks: { label: string; done: boolean }[] }
@@ -1590,7 +1759,7 @@ function getTemplateProgress(title: string, subject: string, objective: string, 
 
 function TemplatePreview({ template, onClose, onPrint }: { template: EvaluationTemplate; onClose: () => void; onPrint: () => void }) {
   const matches = compatibility(template)
-  return <div className="modal-backdrop"><article className="modal-card template-preview printable-template"><div className="modal-head"><div><p className="eyebrow">VISTA PREVIA DE PLANTILLA</p><h2>{template.title || 'Sin título'}</h2><p className="modal-subtitle">{template.subject || 'Sin asignatura'} · Dificultad {template.difficulty}</p></div><button type="button" className="icon-button no-print" onClick={onClose}>×</button></div><div className="preview-hero"><p>{template.description || 'Sin descripción breve.'}</p><div><b>Objetivo</b><span>{template.objective || 'Pendiente de completar.'}</span></div><div><b>Competencia</b><span>{template.competency || 'No especificada.'}</span></div></div><div className="preview-grid"><section><p className="eyebrow">CONCEPTOS</p>{template.concepts.filter((item) => item.name.trim() || item.definition.trim()).length ? template.concepts.filter((item) => item.name.trim() || item.definition.trim()).map((item) => <div className="preview-item" key={item.id}><b>{item.name || 'Sin nombre'}</b><span>{item.definition || 'Sin definición'}</span>{item.example && <small>Ejemplo: {item.example}</small>}</div>) : <p className="preview-empty">No hay conceptos cargados.</p>}</section><section><p className="eyebrow">SITUACIONES</p>{template.situations.filter((item) => item.title.trim() || item.context.trim()).length ? template.situations.filter((item) => item.title.trim() || item.context.trim()).map((item) => <div className="preview-item" key={item.id}><b>{item.title || 'Sin título'}</b><span>{item.context || 'Sin contexto'}</span><small>Decisión: {item.decision || 'Pendiente'} · Consecuencia: {item.consequence || 'Pendiente'}</small></div>) : <p className="preview-empty">No hay situaciones cargadas.</p>}</section></div><div className="preview-grid"><section><p className="eyebrow">PROCESO</p>{template.processSteps.length ? <ol className="preview-list">{template.processSteps.map((step, index) => <li key={'preview-step-' + index}>{step}</li>)}</ol> : <p className="preview-empty">No hay pasos cargados.</p>}</section><section><p className="eyebrow">CATEGORÍAS</p>{template.categories.length ? <div className="preview-tags">{template.categories.map((category, index) => <span key={'preview-category-' + index}>{category}</span>)}</div> : <p className="preview-empty">No hay categorías cargadas.</p>}</section></div><section className="preview-compatibility"><p className="eyebrow">FORMATOS COMPATIBLES</p><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => <div className={'compatibility-item ' + (matches[key as ActivityType].available ? '' : 'unavailable')} key={key}><span>{matches[key as ActivityType].available ? '✓' : '×'}</span><b>{value.label}</b><small>{matches[key as ActivityType].available ? 'Se generará al aceptar' : matches[key as ActivityType].reason}</small></div>)}</div></section><div className="modal-actions no-print"><button type="button" className="outline-button" onClick={onClose}>Volver a editar</button><button type="button" className="primary-button" onClick={onPrint}>Imprimir / guardar PDF</button></div></article></div>
+  return <div className="modal-backdrop"><article className="modal-card template-preview printable-template"><div className="modal-head"><div><p className="eyebrow">VISTA PREVIA DE PLANTILLA</p><h2>{template.title || 'Sin título'}</h2><p className="modal-subtitle">{template.subject || 'Sin asignatura'}</p></div><button type="button" className="icon-button no-print" onClick={onClose}>×</button></div><div className="preview-hero"><p>{template.description || 'Sin descripción breve.'}</p><div><b>Objetivo</b><span>{template.objective || 'Pendiente de completar.'}</span></div><div><b>Competencia</b><span>{template.competency || 'No especificada.'}</span></div></div><div className="preview-grid"><section><p className="eyebrow">CONCEPTOS</p>{template.concepts.filter((item) => item.name.trim() || item.definition.trim()).length ? template.concepts.filter((item) => item.name.trim() || item.definition.trim()).map((item) => <div className="preview-item" key={item.id}><b>{item.name || 'Sin nombre'}</b><span>{item.definition || 'Sin definición'}</span>{item.example && <small>Ejemplo: {item.example}</small>}</div>) : <p className="preview-empty">No hay conceptos cargados.</p>}</section><section><p className="eyebrow">SITUACIONES</p>{template.situations.filter((item) => item.title.trim() || item.context.trim()).length ? template.situations.filter((item) => item.title.trim() || item.context.trim()).map((item) => <div className="preview-item" key={item.id}><b>{item.title || 'Sin título'}</b><span>{item.context || 'Sin contexto'}</span><small>Decisión: {item.decision || 'Pendiente'} · Consecuencia: {item.consequence || 'Pendiente'}</small></div>) : <p className="preview-empty">No hay situaciones cargadas.</p>}</section></div><div className="preview-grid"><section><p className="eyebrow">PROCESO</p>{template.processSteps.length ? <ol className="preview-list">{template.processSteps.map((step, index) => <li key={'preview-step-' + index}>{step}</li>)}</ol> : <p className="preview-empty">No hay pasos cargados.</p>}</section><section><p className="eyebrow">CATEGORÍAS</p>{template.categories.length ? <div className="preview-tags">{template.categories.map((category, index) => <span key={'preview-category-' + index}>{category}</span>)}</div> : <p className="preview-empty">No hay categorías cargados.</p>}</section></div><section className="preview-compatibility"><p className="eyebrow">FORMATOS COMPATIBLES</p><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => <div className={'compatibility-item ' + (matches[key as ActivityType].available ? '' : 'unavailable')} key={key}><span>{matches[key as ActivityType].available ? '✓' : '×'}</span><b>{value.label}</b><small>{matches[key as ActivityType].available ? 'Se generará al aceptar' : matches[key as ActivityType].reason}</small></div>)}</div></section><div className="modal-actions no-print"><button type="button" className="outline-button" onClick={onClose}>Volver a editar</button><button type="button" className="primary-button" onClick={onPrint}>Imprimir / guardar PDF</button></div></article></div>
 }
 
 function TemplateBuilder({ onCancel, onSave }: { onCancel: () => void; onSave: (template: EvaluationTemplate) => void }) {
@@ -1600,7 +1769,7 @@ function TemplateBuilder({ onCancel, onSave }: { onCancel: () => void; onSave: (
   const [description, setDescription] = useState(savedDraft.description ?? '')
   const [objective, setObjective] = useState(savedDraft.objective ?? '')
   const [competency, setCompetency] = useState(savedDraft.competency ?? '')
-  const [difficulty, setDifficulty] = useState<EvaluationTemplate['difficulty']>(savedDraft.difficulty ?? 'Inicial')
+  const difficulty: EvaluationTemplate['difficulty'] = savedDraft.difficulty ?? 'Intermedio'
   const [concepts, setConcepts] = useState<ContentConcept[]>(savedDraft.concepts?.length ? savedDraft.concepts : [{ id: 'c1', name: '', definition: '', example: '' }])
   const [situations, setSituations] = useState<ContentSituation[]>(savedDraft.situations?.length ? savedDraft.situations : [{ id: 's1', title: '', context: '', decision: '', consequence: '' }])
   const [processSteps, setProcessSteps] = useState((savedDraft.processSteps ?? []).join('\n'))
@@ -1630,7 +1799,7 @@ function TemplateBuilder({ onCancel, onSave }: { onCancel: () => void; onSave: (
   }
   const updateConcept = (id: string, key: keyof ContentConcept, value: string) => setConcepts((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item))
   const updateSituation = (id: string, key: keyof ContentSituation, value: string) => setSituations((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item))
-  return <div className="modal-backdrop"><form className="modal-card template-modal" onSubmit={(event) => { event.preventDefault(); handleSave('draft') }}><div className="modal-head"><div><p className="eyebrow">CONSTRUCTOR DE PLANTILLA</p><h2>Estructura tu contenido</h2><p className="modal-subtitle">La plantilla es la fuente; al aprobarla se generan las actividades compatibles.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="template-progress"><div className="template-progress-head"><div><b>Progreso de la plantilla</b><small>{progress.completed} de {progress.total} criterios completos</small></div><strong>{progress.percent}%</strong></div><div className="progress-track"><span style={{ width: progress.percent + '%' }} /></div><div className="progress-checks">{progress.checks.map((check) => <span className={check.done ? 'done' : ''} key={check.label}>{check.done ? '✓' : '○'} {check.label}</span>)}</div></div><div className="autosave-status">{autosaveStatus || 'Los cambios se guardan localmente mientras editas.'}</div><div className="form-grid"><label>Título de la plantilla *<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Asignatura o área *<input required value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Ej. Ciencias naturales" /></label></div><label>Descripción breve<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="¿Qué aprenderá el grupo?" /></label><div className="form-grid"><label>Objetivo de aprendizaje *<textarea required value={objective} onChange={(event) => setObjective(event.target.value)} rows={3} /></label><label>Competencia o capacidad<textarea value={competency} onChange={(event) => setCompetency(event.target.value)} rows={3} /></label></div><div className="form-grid"><label>Dificultad<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as EvaluationTemplate['difficulty'])}><option>Inicial</option><option>Intermedio</option><option>Avanzado</option></select></label><label>Respaldo<div className="backup-actions"><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><small>Desde la vista previa puedes imprimir o guardar como PDF.</small></div></label></div><div className="template-block"><div className="block-heading"><div><p className="eyebrow">CONCEPTOS Y DEFINICIONES</p><b>Ideas que deben comprender</b></div><button type="button" className="text-button" onClick={() => setConcepts((current) => [...current, { id: 'c' + Date.now(), name: '', definition: '', example: '' }])}>＋ Agregar concepto</button></div>{concepts.map((concept) => <div className="repeatable-card" key={concept.id}><div className="repeatable-row"><input aria-label="Nombre del concepto" placeholder="Concepto" value={concept.name} onChange={(event) => updateConcept(concept.id, 'name', event.target.value)} /><button type="button" className="remove-button" onClick={() => setConcepts((current) => current.length > 1 ? current.filter((item) => item.id !== concept.id) : current)}>×</button></div><textarea aria-label="Definición" placeholder="Definición" value={concept.definition} onChange={(event) => updateConcept(concept.id, 'definition', event.target.value)} rows={2} /><input aria-label="Ejemplo" placeholder="Ejemplo o característica" value={concept.example} onChange={(event) => updateConcept(concept.id, 'example', event.target.value)} /></div>)}</div><div className="template-block"><div className="block-heading"><div><p className="eyebrow">SITUACIONES Y CONSECUENCIAS</p><b>Casos para decidir y reflexionar</b></div><button type="button" className="text-button" onClick={() => setSituations((current) => [...current, { id: 's' + Date.now(), title: '', context: '', decision: '', consequence: '' }])}>＋ Agregar situación</button></div>{situations.map((situation) => <div className="repeatable-card" key={situation.id}><div className="repeatable-row"><input aria-label="Título de situación" placeholder="Título del caso" value={situation.title} onChange={(event) => updateSituation(situation.id, 'title', event.target.value)} /><button type="button" className="remove-button" onClick={() => setSituations((current) => current.length > 1 ? current.filter((item) => item.id !== situation.id) : current)}>×</button></div><textarea aria-label="Contexto" placeholder="Contexto de la situación" value={situation.context} onChange={(event) => updateSituation(situation.id, 'context', event.target.value)} rows={2} /><div className="form-grid"><input aria-label="Decisión esperada" placeholder="Decisión o pregunta" value={situation.decision} onChange={(event) => updateSituation(situation.id, 'decision', event.target.value)} /><input aria-label="Consecuencia" placeholder="Consecuencia o feedback" value={situation.consequence} onChange={(event) => updateSituation(situation.id, 'consequence', event.target.value)} /></div></div>)}</div><div className="form-grid"><label>Pasos de un proceso<span className="field-hint">Un paso por línea; habilita ordenamiento desde dos pasos.</span><textarea value={processSteps} onChange={(event) => setProcessSteps(event.target.value)} rows={5} placeholder={'Observar\nAnalizar\nDecidir'} /></label><label>Categorías<span className="field-hint">Una categoría por línea; habilita clasificación.</span><textarea value={categories} onChange={(event) => setCategories(event.target.value)} rows={5} placeholder={'Causa\nConsecuencia'} /></label></div><section className="compatibility-preview"><div className="block-heading"><div><p className="eyebrow">COMPATIBILIDAD EN TIEMPO REAL</p><b>Formatos que se generarán al aceptar</b></div></div><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={'compatibility-item ' + (item.available ? '' : 'unavailable')} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? 'Se creará automáticamente' : item.reason}</small></div> })}</div></section>{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Guardar borrador conserva la estructura. Aceptar contenido aprueba la plantilla y crea automáticamente las actividades compatibles; no requiere una segunda aprobación por actividad.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><button type="submit" className="outline-button">Guardar borrador</button><button type="button" className="primary-button" onClick={() => handleSave('accepted')}>Aceptar contenido</button></div>{showPreview && <TemplatePreview template={currentTemplate} onClose={() => setShowPreview(false)} onPrint={() => window.print()} />}</form></div>
+  return <div className="modal-backdrop"><form className="modal-card template-modal" onSubmit={(event) => { event.preventDefault(); handleSave('draft') }}><div className="modal-head"><div><p className="eyebrow">CONSTRUCTOR DE PLANTILLA</p><h2>Estructura tu contenido</h2><p className="modal-subtitle">La plantilla es la fuente; al aprobarla se generan las actividades compatibles.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="template-progress"><div className="template-progress-head"><div><b>Progreso de la plantilla</b><small>{progress.completed} de {progress.total} criterios completos</small></div><strong>{progress.percent}%</strong></div><div className="progress-track"><span style={{ width: progress.percent + '%' }} /></div><div className="progress-checks">{progress.checks.map((check) => <span className={check.done ? 'done' : ''} key={check.label}>{check.done ? '✓' : '○'} {check.label}</span>)}</div></div><div className="autosave-status">{autosaveStatus || 'Los cambios se guardan localmente mientras editas.'}</div><div className="form-grid"><label>Título de la plantilla *<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Asignatura o área *<input required value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Ej. Ciencias naturales" /></label></div><label>Descripción breve<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="¿Qué aprenderá el grupo?" /></label><div className="form-grid"><label>Objetivo de aprendizaje *<textarea required value={objective} onChange={(event) => setObjective(event.target.value)} rows={3} /></label><label>Competencia o capacidad<textarea value={competency} onChange={(event) => setCompetency(event.target.value)} rows={3} /></label></div><label>Respaldo<div className="backup-actions"><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><small>Desde la vista previa puedes imprimir o guardar como PDF.</small></div></label><div className="template-block"><div className="block-heading"><div><p className="eyebrow">CONCEPTOS Y DEFINICIONES</p><b>Ideas que deben comprender</b></div><button type="button" className="text-button" onClick={() => setConcepts((current) => [...current, { id: 'c' + Date.now(), name: '', definition: '', example: '' }])}>＋ Agregar concepto</button></div>{concepts.map((concept) => <div className="repeatable-card" key={concept.id}><div className="repeatable-row"><input aria-label="Nombre del concepto" placeholder="Concepto" value={concept.name} onChange={(event) => updateConcept(concept.id, 'name', event.target.value)} /><button type="button" className="remove-button" onClick={() => setConcepts((current) => current.length > 1 ? current.filter((item) => item.id !== concept.id) : current)}>×</button></div><textarea aria-label="Definición" placeholder="Definición" value={concept.definition} onChange={(event) => updateConcept(concept.id, 'definition', event.target.value)} rows={2} /><input aria-label="Ejemplo" placeholder="Ejemplo o característica" value={concept.example} onChange={(event) => updateConcept(concept.id, 'example', event.target.value)} /></div>)}</div><div className="template-block"><div className="block-heading"><div><p className="eyebrow">SITUACIONES Y CONSECUENCIAS</p><b>Casos para decidir y reflexionar</b></div><button type="button" className="text-button" onClick={() => setSituations((current) => [...current, { id: 's' + Date.now(), title: '', context: '', decision: '', consequence: '' }])}>＋ Agregar situación</button></div>{situations.map((situation) => <div className="repeatable-card" key={situation.id}><div className="repeatable-row"><input aria-label="Título de situación" placeholder="Título del caso" value={situation.title} onChange={(event) => updateSituation(situation.id, 'title', event.target.value)} /><button type="button" className="remove-button" onClick={() => setSituations((current) => current.length > 1 ? current.filter((item) => item.id !== situation.id) : current)}>×</button></div><textarea aria-label="Contexto" placeholder="Contexto de la situación" value={situation.context} onChange={(event) => updateSituation(situation.id, 'context', event.target.value)} rows={2} /><div className="form-grid"><input aria-label="Decisión esperada" placeholder="Decisión o pregunta" value={situation.decision} onChange={(event) => updateSituation(situation.id, 'decision', event.target.value)} /><input aria-label="Consecuencia" placeholder="Consecuencia o feedback" value={situation.consequence} onChange={(event) => updateSituation(situation.id, 'consequence', event.target.value)} /></div></div>)}</div><div className="form-grid"><label>Pasos de un proceso<span className="field-hint">Un paso por línea; habilita ordenamiento desde dos pasos.</span><textarea value={processSteps} onChange={(event) => setProcessSteps(event.target.value)} rows={5} placeholder={'Observar\nAnalizar\nDecidir'} /></label><label>Categorías<span className="field-hint">Una categoría por línea; habilita clasificación.</span><textarea value={categories} onChange={(event) => setCategories(event.target.value)} rows={5} placeholder={'Causa\nConsecuencia'} /></label></div><section className="compatibility-preview"><div className="block-heading"><div><p className="eyebrow">COMPATIBILIDAD EN TIEMPO REAL</p><b>Formatos que se generarán al aceptar</b></div></div><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={'compatibility-item ' + (item.available ? '' : 'unavailable')} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? 'Se creará automáticamente' : item.reason}</small></div> })}</div></section>{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Guardar borrador conserva la estructura. Aceptar contenido aprueba la plantilla y crea automáticamente las actividades compatibles; no requiere una segunda aprobación por actividad.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><button type="submit" className="outline-button">Guardar borrador</button><button type="button" className="primary-button" onClick={() => handleSave('accepted')}>Aceptar contenido</button></div>{showPreview && <TemplatePreview template={currentTemplate} onClose={() => setShowPreview(false)} onPrint={() => window.print()} />}</form></div>
 }
 function optionsForTemplate(template: EvaluationTemplate, type: ActivityType): string[] {
   const concepts = template.concepts.filter((item) => item.name.trim()).map((item) => item.name)
@@ -1646,12 +1815,12 @@ function optionsForTemplate(template: EvaluationTemplate, type: ActivityType): s
 
 
 type ActivityEditorState = {
-  scenario: { situation: string; stages: ScenarioStage[] }
-  trueFalse: { statement: string; correct: boolean; explanation: string }
-  matching: { pairs: MatchingPair[] }
-  sorting: { categories: string[]; items: SortingItem[] }
-  ordering: { steps: string[] }
-  singleChoice: { options: ChoiceOption[] }
+  trueFalse: { context: string; statement: string; correct: boolean | null; explanation: string; hint: string }
+  singleChoice: { context: string; options: ChoiceOption[]; hint: string; explanation: string }
+  matching: { context: string; pairs: MatchingPair[]; hint: string; explanation: string }
+  sorting: { context: string; categories: string[]; items: SortingItem[]; hint: string; explanation: string }
+  ordering: { context: string; steps: string[]; hint: string; explanation: string }
+  scenario: { situation: string; stages: ScenarioStage[]; hint: string; explanation: string }
 }
 
 function makeEditorId(prefix: string): string {
@@ -1673,25 +1842,49 @@ function createEditorState(template: EvaluationTemplate | undefined): ActivityEd
     { id: makeEditorId('option-'), text: 'Ignorar las consecuencias', consequence: 'El problema puede crecer y afectar al grupo.', feedback: 'Considera cómo cada decisión afecta a otras personas.', recommended: false },
   ]
   return {
-    scenario: {
-      situation: firstSituation,
-      stages: [{ id: makeEditorId('stage-'), title: 'Decisión principal', prompt: situation?.decision || template?.objective || '', options: scenarioOptions }],
-    },
+    // Falso/verdadero v1.2: la clave queda sin elegir y la pista/explicación vacías; el docente debe completarlas.
     trueFalse: {
-      statement: completeConcepts[0] ? completeConcepts[0].name + ': ' + completeConcepts[0].definition : template?.objective || '',
-      correct: true,
-      explanation: completeConcepts[0]?.example || completeConcepts[0]?.definition || 'Escribe la evidencia que permite justificar la respuesta.',
+      context: '',
+      statement: completeConcepts[0] ? completeConcepts[0].name + ': ' + completeConcepts[0].definition : '',
+      correct: null,
+      explanation: '',
+      hint: '',
     },
+    // Selección única v1.2: ninguna opción viene marcada como correcta por defecto; el docente debe elegir la clave y redactar la pista.
+    singleChoice: {
+      context: '',
+      options: (concepts.length >= 2 ? concepts.map((item) => item.name) : ['', '']).slice(0, 6).map((label) => ({ id: makeEditorId('choice-'), label, correct: false })),
+      hint: '',
+      explanation: '',
+    },
+    // Asociación v1.2: pares con pista orientadora obligatoria y explicación privada opcional.
     matching: {
-      pairs: (completeConcepts.length ? completeConcepts : [{ id: 'empty-1', name: '', definition: '', example: '' }, { id: 'empty-2', name: '', definition: '', example: '' }]).slice(0, 6).map((item) => ({ id: makeEditorId('pair-'), left: item.name, right: item.definition })),
+      context: '',
+      pairs: (completeConcepts.length >= 2 ? completeConcepts : [{ id: 'empty-1', name: '', definition: '', example: '' }, { id: 'empty-2', name: '', definition: '', example: '' }]).slice(0, 6).map((item) => ({ id: makeEditorId('pair-'), left: item.name, right: item.definition })),
+      hint: '',
+      explanation: '',
     },
+    // Clasificación v1.2: categorías, elementos, pista orientadora obligatoria y explicación privada opcional.
     sorting: {
+      context: '',
       categories: (categories.length >= 2 ? categories : ['Categoría A', 'Categoría B']).slice(0, 6),
       items: (concepts.length ? concepts : [{ id: 'item-1', name: '', definition: '', example: '' }, { id: 'item-2', name: '', definition: '', example: '' }]).slice(0, 12).map((item, index) => ({ id: makeEditorId('sort-'), label: item.name, category: (categories.length >= 2 ? categories : ['Categoría A', 'Categoría B'])[index % 2] })),
+      hint: '',
+      explanation: '',
     },
-    ordering: { steps: (steps.length >= 2 ? steps : ['Paso inicial', 'Paso siguiente']).slice(0, 12) },
-    singleChoice: {
-      options: (concepts.length ? concepts.map((item) => item.name) : [scenarioDecision, 'Otra opción']).filter(Boolean).slice(0, 6).map((label, index) => ({ id: makeEditorId('choice-'), label, correct: index === 0 })),
+    // Ordenamiento v1.2: pasos en secuencia lógica, pista orientadora obligatoria y explicación privada opcional.
+    ordering: {
+      context: '',
+      steps: (steps.length >= 3 ? steps : ['Paso inicial', 'Paso intermedio', 'Paso final']).slice(0, 8),
+      hint: '',
+      explanation: '',
+    },
+    // Escenario de decisiones v1.2: caso contextualizado, etapas con consecuencias pedagógicas, pista orientadora y justificación privada.
+    scenario: {
+      situation: firstSituation || template?.description || 'En una situación comunitaria se presentan diferentes posturas sobre cómo abordar una problemática compartida.',
+      stages: [{ id: makeEditorId('stage-'), title: 'Decisión principal', prompt: situation?.decision || template?.objective || '¿Qué acción debe tomarse primero?', options: scenarioOptions }],
+      hint: '',
+      explanation: '',
     },
   }
 }
@@ -1699,97 +1892,528 @@ function createEditorState(template: EvaluationTemplate | undefined): ActivityEd
 function validateActivityEditor(type: ActivityType, title: string, prompt: string, value: ActivityEditorState): string {
   if (!title.trim()) return 'Escribe un título para la actividad.'
   if (!prompt.trim()) return 'Escribe la consigna que verá el estudiante.'
-  if (type === 'scenario') {
-    if (!value.scenario.situation.trim()) return 'Completa el contexto del escenario.'
-    if (!value.scenario.stages.length) return 'Agrega al menos una etapa de decisión.'
-    if (value.scenario.stages.some((stage) => !stage.prompt.trim() || stage.options.length < 2 || stage.options.some((option) => !option.text.trim() || !option.consequence.trim() || !option.feedback.trim()))) return 'Cada etapa necesita una consigna y dos opciones completas con consecuencia y feedback.'
-    if (!value.scenario.stages.some((stage) => stage.options.some((option) => option.recommended))) return 'Marca una opción recomendada en el escenario.'
-  }
-  if (type === 'trueFalse' && (!value.trueFalse.statement.trim() || !value.trueFalse.explanation.trim())) return 'Completa la afirmación y la explicación del falso/verdadero.'
-  if (type === 'matching' && (value.matching.pairs.length < 2 || value.matching.pairs.some((pair) => !pair.left.trim() || !pair.right.trim()))) return 'La asociación necesita al menos dos pares completos.'
-  if (type === 'sorting' && (value.sorting.categories.filter(Boolean).length < 2 || value.sorting.items.length < 2 || value.sorting.items.some((item) => !item.label.trim() || !item.category))) return 'La clasificación necesita dos categorías y dos elementos asignados.'
-  if (type === 'ordering' && (value.ordering.steps.length < 2 || value.ordering.steps.some((step) => !step.trim()))) return 'El ordenamiento necesita al menos dos pasos completos.'
-  if (type === 'singleChoice' && (value.singleChoice.options.length < 2 || value.singleChoice.options.some((option) => !option.label.trim()) || value.singleChoice.options.filter((option) => option.correct).length !== 1)) return 'La selección necesita dos opciones y exactamente una respuesta correcta.'
+  if (type === 'trueFalse') { const issue = validateTrueFalseDefinition(trueFalseEditorToDefinition(value.trueFalse))[0]; if (issue) return trueFalseIssueMessage(issue.path, issue.message) }
+  if (type === 'singleChoice') { const issue = validateSingleChoiceDefinition(singleChoiceEditorToDefinition(prompt, value.singleChoice))[0]; if (issue) return singleChoiceIssueMessage(issue.path, issue.message) }
+  if (type === 'matching') { const issue = validateMatchingDefinition(matchingEditorToDefinition(prompt, value.matching))[0]; if (issue) return matchingIssueMessage(issue.path, issue.message) }
+  if (type === 'sorting') { const issue = validateSortingDefinition(sortingEditorToDefinition(prompt, value.sorting))[0]; if (issue) return sortingIssueMessage(issue.path, issue.message) }
+  if (type === 'ordering') { const issue = validateOrderingDefinition(orderingEditorToDefinition(prompt, value.ordering))[0]; if (issue) return orderingIssueMessage(issue.path, issue.message) }
+  if (type === 'scenario') { const issue = validateScenarioDefinition(scenarioEditorToDefinition(prompt, value.scenario))[0]; if (issue) return scenarioIssueMessage(issue.path, issue.message) }
   return ''
 }
 
 function editorStateToActivity(type: ActivityType, value: ActivityEditorState, common: { templateId?: string; title: string; topic: string; difficulty: Activity['difficulty']; prompt: string; feedback: string }): Activity {
-  if (type === 'scenario') {
-    const stages = value.scenario.stages
-    const options = stages.flatMap((stage) => stage.options.map((option) => option.text))
-    const recommended = stages.flatMap((stage) => stage.options).find((option) => option.recommended)
-    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: recommended?.text ?? options[0] ?? '', feedback: recommended?.feedback ?? common.feedback, details: { scenario: value.scenario }, status: 'published' }
-  }
   if (type === 'trueFalse') {
-    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options: ['Verdadero', 'Falso'], answer: value.trueFalse.correct ? 'Verdadero' : 'Falso', feedback: value.trueFalse.explanation, details: { trueFalse: value.trueFalse }, status: 'published' }
+    const tf = value.trueFalse
+    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options: ['Verdadero', 'Falso'], answer: tf.correct ? 'Verdadero' : 'Falso', feedback: tf.hint.trim(), details: { trueFalse: { statement: tf.statement.trim(), correct: tf.correct === true, explanation: tf.explanation.trim(), context: tf.context.trim() || undefined, hint: tf.hint.trim() } }, status: 'published' }
+  }
+  if (type === 'singleChoice') {
+    const sc = value.singleChoice
+    const cleanOptions = sc.options.map((option) => ({ id: option.id, label: option.label.trim(), correct: option.correct }))
+    const options = cleanOptions.map((option) => option.label)
+    const correct = cleanOptions.find((option) => option.correct)?.label ?? ''
+    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: correct, feedback: sc.hint.trim(), details: { singleChoice: { options: cleanOptions, context: sc.context.trim() || undefined, hint: sc.hint.trim(), explanation: sc.explanation.trim() || undefined } }, status: 'published' }
   }
   if (type === 'matching') {
-    const options = value.matching.pairs.map((pair) => pair.left + ' → ' + pair.right)
-    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: options, feedback: common.feedback, details: { matching: value.matching }, status: 'published' }
+    const m = value.matching
+    const cleanPairs = m.pairs.map((pair) => ({ id: pair.id, left: pair.left.trim(), right: pair.right.trim() }))
+    const options = cleanPairs.map((pair) => pair.left + ' → ' + pair.right)
+    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: options, feedback: m.hint.trim(), details: { matching: { pairs: cleanPairs, context: m.context.trim() || undefined, hint: m.hint.trim(), explanation: m.explanation.trim() || undefined } }, status: 'published' }
   }
   if (type === 'sorting') {
-    const options = value.sorting.items.map((item) => item.label)
-    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: value.sorting.items.map((item) => item.category), feedback: common.feedback, details: { sorting: value.sorting }, status: 'published' }
+    const s = value.sorting
+    const cleanCategories = s.categories.map((cat) => cat.trim()).filter(Boolean)
+    const cleanItems = s.items.map((item) => ({ id: item.id, label: item.label.trim(), category: item.category.trim() }))
+    const options = cleanItems.map((item) => item.label)
+    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: cleanItems.map((item) => item.category), feedback: s.hint.trim(), details: { sorting: { categories: cleanCategories, items: cleanItems, context: s.context.trim() || undefined, hint: s.hint.trim(), explanation: s.explanation.trim() || undefined } }, status: 'published' }
   }
   if (type === 'ordering') {
-    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options: value.ordering.steps, answer: value.ordering.steps, feedback: common.feedback, details: { ordering: value.ordering }, status: 'published' }
+    const o = value.ordering
+    const cleanSteps = o.steps.map((step) => step.trim())
+    return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options: cleanSteps, answer: cleanSteps, feedback: o.hint.trim(), details: { ordering: { steps: cleanSteps, context: o.context.trim() || undefined, hint: o.hint.trim(), explanation: o.explanation.trim() || undefined } }, status: 'published' }
   }
-  const options = value.singleChoice.options.map((option) => option.label)
-  const correct = value.singleChoice.options.find((option) => option.correct)?.label ?? ''
-  return { id: '', templateId: common.templateId, title: common.title, type, topic: common.topic, difficulty: common.difficulty, prompt: common.prompt, options, answer: correct, feedback: common.feedback, details: { singleChoice: value.singleChoice }, status: 'published' }
+  if (type === 'scenario') {
+    const sc = value.scenario
+    const cleanStages = sc.stages.map((stage) => ({
+      id: stage.id,
+      title: stage.title.trim(),
+      prompt: stage.prompt.trim(),
+      options: stage.options.map((option) => ({
+        id: option.id,
+        text: option.text.trim(),
+        consequence: option.consequence.trim(),
+        feedback: option.feedback.trim(),
+        recommended: option.recommended,
+      })),
+    }))
+    const options = cleanStages.flatMap((stage) => stage.options.map((option) => option.text))
+    const recommended = cleanStages.flatMap((stage) => stage.options).find((option) => option.recommended)
+    return {
+      id: '',
+      templateId: common.templateId,
+      title: common.title,
+      type,
+      topic: common.topic,
+      difficulty: common.difficulty,
+      prompt: common.prompt,
+      options,
+      answer: recommended?.text ?? options[0] ?? '',
+      feedback: sc.hint.trim(),
+      details: {
+        scenario: {
+          situation: sc.situation.trim(),
+          stages: cleanStages,
+          hint: sc.hint.trim(),
+          explanation: sc.explanation.trim() || undefined,
+        },
+      },
+      status: 'published',
+    }
+  }
+  throw new Error(`Tipo de actividad no soportado: ${type as string}`)
 }
 
 function ScenarioEditor({ value, onChange }: { value: ActivityEditorState['scenario']; onChange: (value: ActivityEditorState['scenario']) => void }) {
   const updateStage = (id: string, patch: Partial<ScenarioStage>) => onChange({ ...value, stages: value.stages.map((stage) => stage.id === id ? { ...stage, ...patch } : stage) })
   const updateOption = (stageId: string, optionId: string, patch: Partial<ScenarioOption>) => onChange({ ...value, stages: value.stages.map((stage) => stage.id === stageId ? { ...stage, options: stage.options.map((option) => option.id === optionId ? { ...option, ...patch } : option) } : stage) })
-  const addStage = () => onChange({ ...value, stages: [...value.stages, { id: makeEditorId('stage-'), title: 'Nueva etapa', prompt: '', options: [{ id: makeEditorId('option-'), text: '', consequence: '', feedback: '', recommended: true }, { id: makeEditorId('option-'), text: '', consequence: '', feedback: '', recommended: false }] }] })
-  const addOption = (stageId: string) => onChange({ ...value, stages: value.stages.map((stage) => stage.id === stageId ? { ...stage, options: [...stage.options, { id: makeEditorId('option-'), text: '', consequence: '', feedback: '', recommended: false }] } : stage) })
-  const removeStage = (id: string) => onChange({ ...value, stages: value.stages.length > 1 ? value.stages.filter((stage) => stage.id !== id) : value.stages })
-  const removeOption = (stageId: string, optionId: string) => onChange({ ...value, stages: value.stages.map((stage) => stage.id === stageId && stage.options.length > 2 ? { ...stage, options: stage.options.filter((option) => option.id !== optionId) } : stage) })
-  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE ESCENARIO</p><b>Decisiones, etapas y consecuencias</b></div><button type="button" className="text-button" onClick={addStage}>＋ Agregar etapa</button></div><label>Contexto general<textarea rows={3} value={value.situation} onChange={(event) => onChange({ ...value, situation: event.target.value })} placeholder="Describe la situación real que deberá analizar el estudiante." /></label>{value.stages.map((stage, stageIndex) => <div className="editor-card" key={stage.id}><div className="editor-card-head"><b>Etapa {stageIndex + 1}</b><button type="button" className="remove-button" onClick={() => removeStage(stage.id)}>×</button></div><div className="form-grid"><label>Nombre de la etapa<input value={stage.title} onChange={(event) => updateStage(stage.id, { title: event.target.value })} /></label><label>Consigna de la etapa<textarea rows={2} value={stage.prompt} onChange={(event) => updateStage(stage.id, { prompt: event.target.value })} /></label></div><div className="editor-options">{stage.options.map((option, optionIndex) => <div className="editor-option" key={option.id}><div className="editor-card-head"><b>{'Opción ' + (optionIndex + 1)}</b><button type="button" className="remove-button" onClick={() => removeOption(stage.id, option.id)}>×</button></div><input placeholder="Texto de la opción" value={option.text} onChange={(event) => updateOption(stage.id, option.id, { text: event.target.value })} /><input placeholder="Consecuencia de elegirla" value={option.consequence} onChange={(event) => updateOption(stage.id, option.id, { consequence: event.target.value })} /><textarea rows={2} placeholder="Feedback orientador" value={option.feedback} onChange={(event) => updateOption(stage.id, option.id, { feedback: event.target.value })} /><label className="radio-row"><input type="radio" name={'recommended-' + stage.id} checked={option.recommended} onChange={() => onChange({ ...value, stages: value.stages.map((item) => item.id === stage.id ? { ...item, options: item.options.map((entry) => ({ ...entry, recommended: entry.id === option.id })) } : item) })} /> Opción recomendada</label></div>)}</div><button type="button" className="text-button" onClick={() => addOption(stage.id)}>＋ Agregar opción</button></div>)}</section>
+  const addStage = () => value.stages.length < SCENARIO_LIMITS.maxStages ? onChange({ ...value, stages: [...value.stages, { id: makeEditorId('stage-'), title: `Etapa ${value.stages.length + 1}`, prompt: '', options: [{ id: makeEditorId('option-'), text: '', consequence: '', feedback: '', recommended: true }, { id: makeEditorId('option-'), text: '', consequence: '', feedback: '', recommended: false }] }] }) : undefined
+  const addOption = (stageId: string) => {
+    const stage = value.stages.find((s) => s.id === stageId)
+    if (!stage || stage.options.length >= SCENARIO_LIMITS.maxOptions) return
+    onChange({ ...value, stages: value.stages.map((s) => s.id === stageId ? { ...s, options: [...s.options, { id: makeEditorId('option-'), text: '', consequence: '', feedback: '', recommended: false }] } : s) })
+  }
+  const removeStage = (id: string) => onChange({ ...value, stages: value.stages.length > SCENARIO_LIMITS.minStages ? value.stages.filter((stage) => stage.id !== id) : value.stages })
+  const removeOption = (stageId: string, optionId: string) => onChange({ ...value, stages: value.stages.map((stage) => stage.id === stageId && stage.options.length > SCENARIO_LIMITS.minOptions ? { ...stage, options: stage.options.filter((option) => option.id !== optionId) } : stage) })
+
+  return (
+    <section className="editor-section">
+      <div className="editor-heading">
+        <div>
+          <p className="eyebrow">EDITOR DE ESCENARIO</p>
+          <b>Dilema, etapas y consecuencias pedagógicas</b>
+        </div>
+        <button type="button" className="text-button" onClick={addStage} disabled={value.stages.length >= SCENARIO_LIMITS.maxStages}>
+          ＋ Agregar etapa
+        </button>
+      </div>
+      <label>
+        Situación o caso contextualizado *
+        <textarea
+          rows={3}
+          maxLength={SCENARIO_LIMITS.situation}
+          value={value.situation}
+          onChange={(event) => onChange({ ...value, situation: event.target.value })}
+          placeholder="Describe la situación real, caso profesional o dilema ético que deberá analizar el estudiante."
+        />
+      </label>
+      <p className="editor-help">
+        Configura entre 1 y 3 etapas. Cada opción debe incluir su consecuencia real y feedback reflexivo, marcando exactamente una como la decisión recomendada.
+      </p>
+      {value.stages.map((stage, stageIndex) => (
+        <div className="editor-card" key={stage.id}>
+          <div className="editor-card-head">
+            <b>Etapa {stageIndex + 1}</b>
+            <button
+              type="button"
+              className="remove-button"
+              onClick={() => removeStage(stage.id)}
+              disabled={value.stages.length <= SCENARIO_LIMITS.minStages}
+            >
+              ×
+            </button>
+          </div>
+          <div className="form-grid">
+            <label>
+              Nombre de la etapa
+              <input
+                maxLength={SCENARIO_LIMITS.stageTitle}
+                value={stage.title}
+                onChange={(event) => updateStage(stage.id, { title: event.target.value })}
+              />
+            </label>
+            <label>
+              Consigna de decisión
+              <textarea
+                rows={2}
+                maxLength={SCENARIO_LIMITS.stagePrompt}
+                value={stage.prompt}
+                onChange={(event) => updateStage(stage.id, { prompt: event.target.value })}
+              />
+            </label>
+          </div>
+          <div className="editor-options">
+            {stage.options.map((option, optionIndex) => (
+              <div className="editor-option" key={option.id}>
+                <div className="editor-card-head">
+                  <b>{'Opción ' + (optionIndex + 1)}</b>
+                  <button
+                    type="button"
+                    className="remove-button"
+                    onClick={() => removeOption(stage.id, option.id)}
+                    disabled={stage.options.length <= SCENARIO_LIMITS.minOptions}
+                  >
+                    ×
+                  </button>
+                </div>
+                <input
+                  maxLength={SCENARIO_LIMITS.optionText}
+                  placeholder="Texto de la opción (acción a tomar)"
+                  value={option.text}
+                  onChange={(event) => updateOption(stage.id, option.id, { text: event.target.value })}
+                />
+                <input
+                  maxLength={SCENARIO_LIMITS.consequence}
+                  placeholder="Consecuencia directa en la situación"
+                  value={option.consequence}
+                  onChange={(event) => updateOption(stage.id, option.id, { consequence: event.target.value })}
+                />
+                <textarea
+                  rows={2}
+                  maxLength={SCENARIO_LIMITS.feedback}
+                  placeholder="Feedback formativo orientador"
+                  value={option.feedback}
+                  onChange={(event) => updateOption(stage.id, option.id, { feedback: event.target.value })}
+                />
+                <label className="radio-row">
+                  <input
+                    type="radio"
+                    name={'recommended-' + stage.id}
+                    checked={option.recommended}
+                    onChange={() =>
+                      onChange({
+                        ...value,
+                        stages: value.stages.map((item) =>
+                          item.id === stage.id
+                            ? {
+                                ...item,
+                                options: item.options.map((entry) => ({ ...entry, recommended: entry.id === option.id })),
+                              }
+                            : item,
+                        ),
+                      })
+                    }
+                  />{' '}
+                  Opción pedagógicamente recomendada
+                </label>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => addOption(stage.id)}
+            disabled={stage.options.length >= SCENARIO_LIMITS.maxOptions}
+          >
+            ＋ Agregar opción
+          </button>
+        </div>
+      ))}
+      <label>
+        Pista orientadora para el estudiante *
+        <textarea
+          rows={2}
+          maxLength={SCENARIO_LIMITS.hint}
+          value={value.hint}
+          onChange={(event) => onChange({ ...value, hint: event.target.value })}
+          placeholder="Se muestra tras confirmar las decisiones. Orienta la reflexión global sin delatar la recomendada."
+        />
+      </label>
+      <label>
+        Explicación privada docente (opcional)
+        <textarea
+          rows={2}
+          maxLength={SCENARIO_LIMITS.explanation}
+          value={value.explanation}
+          onChange={(event) => onChange({ ...value, explanation: event.target.value })}
+          placeholder="Fundamentación pedagógica y teórica de las opciones recomendadas. Solo para el docente y CSV."
+        />
+      </label>
+    </section>
+  )
+}
+
+function scenarioEditorToDefinition(prompt: string, value: ActivityEditorState['scenario']) {
+  return {
+    type: 'scenario' as const,
+    id: 'editor',
+    prompt,
+    situation: value.situation,
+    stages: value.stages,
+    hint: value.hint,
+    ...(value.explanation.trim() ? { explanation: value.explanation } : {}),
+  }
+}
+
+function scenarioIssueMessage(path: string, message: string): string {
+  const field: Record<string, string> = {
+    prompt: 'Consigna general',
+    situation: 'Situación contextualizada',
+    stages: 'Etapas',
+    hint: 'Pista orientadora',
+    explanation: 'Explicación privada',
+  }
+  if (path.startsWith('stages[')) return message
+  return (field[path] ?? path) + ': ' + message
 }
 
 function TrueFalseEditor({ value, onChange }: { value: ActivityEditorState['trueFalse']; onChange: (value: ActivityEditorState['trueFalse']) => void }) {
-  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR FALSO / VERDADERO</p><b>Afirmación y evidencia</b></div></div><label>Afirmación<textarea rows={3} value={value.statement} onChange={(event) => onChange({ ...value, statement: event.target.value })} placeholder="Escribe una afirmación que el estudiante deba evaluar." /></label><div className="form-grid"><label>Respuesta esperada<select value={value.correct ? 'true' : 'false'} onChange={(event) => onChange({ ...value, correct: event.target.value === 'true' })}><option value="true">Verdadero</option><option value="false">Falso</option></select></label><label>Explicación de la respuesta<textarea rows={2} value={value.explanation} onChange={(event) => onChange({ ...value, explanation: event.target.value })} placeholder="Evidencia o razonamiento, sin mostrarse como respuesta directa al estudiante." /></label></div><p className="editor-help">La explicación se guarda como guía docente y feedback orientador.</p></section>
+  const keyValue = value.correct === null ? '' : value.correct ? 'true' : 'false'
+  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR FALSO / VERDADERO</p><b>Afirmación, clave y orientación</b></div></div><label>Contexto o evidencia (opcional)<textarea rows={3} maxLength={TRUE_FALSE_LIMITS.context} value={value.context} onChange={(event) => onChange({ ...value, context: event.target.value })} placeholder="Fragmento, dato o situación que el estudiante debe interpretar." /></label><label>Afirmación<textarea rows={3} maxLength={TRUE_FALSE_LIMITS.statement} value={value.statement} onChange={(event) => onChange({ ...value, statement: event.target.value })} placeholder="Escribe una afirmación verificable." /></label><label>Respuesta esperada (obligatoria)<select value={keyValue} onChange={(event) => onChange({ ...value, correct: event.target.value === '' ? null : event.target.value === 'true' })}><option value="">— Elige la clave —</option><option value="true">Verdadero</option><option value="false">Falso</option></select></label><label>Pista orientadora para el estudiante<textarea rows={2} maxLength={TRUE_FALSE_LIMITS.hint} value={value.hint} onChange={(event) => onChange({ ...value, hint: event.target.value })} placeholder="Se muestra tras confirmar, igual si acierta o falla. No debe revelar si es verdadera o falsa." /></label><label>Explicación privada (opcional)<textarea rows={2} maxLength={TRUE_FALSE_LIMITS.explanation} value={value.explanation} onChange={(event) => onChange({ ...value, explanation: event.target.value })} placeholder="Justificación de la clave. Solo la ven el docente y el CSV." /></label><p className="editor-help">El estudiante ve el contexto y la afirmación. Tras confirmar ve solo la pista, sin saber si acertó. La clave y la explicación nunca se le muestran. Revisa que la pista no delate la respuesta.</p></section>
+}
+
+function trueFalseEditorToDefinition(value: ActivityEditorState['trueFalse']) {
+  return { type: 'trueFalse' as const, id: 'editor', statement: value.statement, correct: value.correct ?? undefined, hint: value.hint, ...(value.context.trim() ? { context: value.context } : {}), ...(value.explanation.trim() ? { explanation: value.explanation } : {}) }
+}
+
+function trueFalseIssueMessage(path: string, message: string): string {
+  const field: Record<string, string> = { statement: 'Afirmación', correct: 'Respuesta esperada', hint: 'Pista orientadora', context: 'Contexto', explanation: 'Explicación privada' }
+  if (path === 'correct') return 'Elige la respuesta esperada (Verdadero o Falso) del falso/verdadero.'
+  return (field[path] ?? path) + ': ' + message
 }
 
 function MatchingEditor({ value, onChange }: { value: ActivityEditorState['matching']; onChange: (value: ActivityEditorState['matching']) => void }) {
   const updatePair = (id: string, patch: Partial<MatchingPair>) => onChange({ ...value, pairs: value.pairs.map((pair) => pair.id === id ? { ...pair, ...patch } : pair) })
-  const addPair = () => onChange({ ...value, pairs: [...value.pairs, { id: makeEditorId('pair-'), left: '', right: '' }] })
-  const removePair = (id: string) => onChange({ ...value, pairs: value.pairs.length > 2 ? value.pairs.filter((pair) => pair.id !== id) : value.pairs })
-  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE ASOCIACIÓN</p><b>Pares correctos y relación conceptual</b></div><button type="button" className="text-button" onClick={addPair}>＋ Agregar par</button></div><p className="editor-help">Cada fila representa una relación correcta; el estudiante verá los elementos separados.</p>{value.pairs.map((pair, index) => <div className="form-grid editor-card" key={pair.id}><label>Idea {index + 1}<input value={pair.left} onChange={(event) => updatePair(pair.id, { left: event.target.value })} placeholder="Concepto o idea" /></label><label>Se relaciona con<input value={pair.right} onChange={(event) => updatePair(pair.id, { right: event.target.value })} placeholder="Definición o aporte" /><button type="button" className="remove-inline" onClick={() => removePair(pair.id)}>Eliminar fila</button></label></div>)}</section>
+  const addPair = () => value.pairs.length < MATCHING_LIMITS.maxPairs ? onChange({ ...value, pairs: [...value.pairs, { id: makeEditorId('pair-'), left: '', right: '' }] }) : undefined
+  const removePair = (id: string) => onChange({ ...value, pairs: value.pairs.length > MATCHING_LIMITS.minPairs ? value.pairs.filter((pair) => pair.id !== id) : value.pairs })
+  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE ASOCIACIÓN</p><b>Pares correctos y relación conceptual</b></div><button type="button" className="text-button" onClick={addPair} disabled={value.pairs.length >= MATCHING_LIMITS.maxPairs}>＋ Agregar par</button></div><label>Contexto o marco conceptual (opcional)<textarea rows={2} maxLength={MATCHING_LIMITS.context} value={value.context} onChange={(event) => onChange({ ...value, context: event.target.value })} placeholder="Situación, texto o referencia que orienta la relación entre las dos columnas." /></label><p className="editor-help">Define entre 2 y 6 pares únicos. El estudiante verá las dos columnas separadas (la derecha desordenada) y las enlazará tocando concepto y definición.</p>{value.pairs.map((pair, index) => <div className="form-grid editor-card" key={pair.id}><label>Idea {index + 1}<input maxLength={MATCHING_LIMITS.leftText} value={pair.left} onChange={(event) => updatePair(pair.id, { left: event.target.value })} placeholder="Concepto o actor" /></label><label>Se relaciona con<input maxLength={MATCHING_LIMITS.rightText} value={pair.right} onChange={(event) => updatePair(pair.id, { right: event.target.value })} placeholder="Definición o función" /><button type="button" className="remove-inline" onClick={() => removePair(pair.id)} disabled={value.pairs.length <= MATCHING_LIMITS.minPairs}>Eliminar fila</button></label></div>)}<label>Pista orientadora para el estudiante *<textarea rows={2} maxLength={MATCHING_LIMITS.hint} value={value.hint} onChange={(event) => onChange({ ...value, hint: event.target.value })} placeholder="Se muestra tras confirmar todos los pares, igual si acierta o falla. No debe revelar los enlaces." /></label><label>Explicación privada (opcional)<textarea rows={2} maxLength={MATCHING_LIMITS.explanation} value={value.explanation} onChange={(event) => onChange({ ...value, explanation: event.target.value })} placeholder="Justificación de las relaciones correctas. Solo la ven el docente y el CSV." /></label></section>
+}
+
+function matchingEditorToDefinition(prompt: string, value: ActivityEditorState['matching']) {
+  return {
+    type: 'matching' as const,
+    id: 'editor',
+    prompt,
+    pairs: value.pairs,
+    hint: value.hint,
+    ...(value.context.trim() ? { context: value.context } : {}),
+    ...(value.explanation.trim() ? { explanation: value.explanation } : {}),
+  }
+}
+
+function matchingIssueMessage(path: string, message: string): string {
+  const field: Record<string, string> = {
+    prompt: 'Consigna general',
+    pairs: 'Pares',
+    hint: 'Pista orientadora',
+    context: 'Contexto',
+    explanation: 'Explicación privada',
+  }
+  if (path.startsWith('pairs[')) return message
+  return (field[path] ?? path) + ': ' + message
 }
 
 function SortingEditor({ value, onChange }: { value: ActivityEditorState['sorting']; onChange: (value: ActivityEditorState['sorting']) => void }) {
   const updateItem = (id: string, patch: Partial<SortingItem>) => onChange({ ...value, items: value.items.map((item) => item.id === id ? { ...item, ...patch } : item) })
-  const addItem = () => onChange({ ...value, items: [...value.items, { id: makeEditorId('sort-'), label: '', category: value.categories[0] || '' }] })
-  const addCategory = () => onChange({ ...value, categories: [...value.categories, ''] })
-  const removeItem = (id: string) => onChange({ ...value, items: value.items.length > 2 ? value.items.filter((item) => item.id !== id) : value.items })
+  const addItem = () => value.items.length < SORTING_LIMITS.maxItems ? onChange({ ...value, items: [...value.items, { id: makeEditorId('sort-'), label: '', category: value.categories[0] || '' }] }) : undefined
+  const addCategory = () => value.categories.length < SORTING_LIMITS.maxCategories ? onChange({ ...value, categories: [...value.categories, ''] }) : undefined
+  const removeCategory = (index: number) => {
+    if (value.categories.length <= SORTING_LIMITS.minCategories) return
+    const removed = value.categories[index]
+    const nextCategories = value.categories.filter((_, idx) => idx !== index)
+    const fallback = nextCategories.find(Boolean) ?? ''
+    onChange({
+      ...value,
+      categories: nextCategories,
+      items: value.items.map((item) => item.category === removed ? { ...item, category: fallback } : item),
+    })
+  }
+  const removeItem = (id: string) => onChange({ ...value, items: value.items.length > SORTING_LIMITS.minItems ? value.items.filter((item) => item.id !== id) : value.items })
   const updateCategory = (index: number, next: string) => onChange({ ...value, categories: value.categories.map((category, categoryIndex) => categoryIndex === index ? next : category), items: value.items.map((item) => item.category === value.categories[index] ? { ...item, category: next } : item) })
-  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE CLASIFICACIÓN</p><b>Categorías y elementos</b></div><button type="button" className="text-button" onClick={addItem}>＋ Agregar elemento</button></div><div className="category-editor"><div className="block-heading"><b>Categorías destino</b><button type="button" className="text-button" onClick={addCategory}>＋ Agregar categoría</button></div>{value.categories.map((category, index) => <div className="repeatable-row" key={'category-' + index}><input value={category} placeholder={'Categoría ' + (index + 1)} onChange={(event) => updateCategory(index, event.target.value)} /></div>)}</div><div className="editor-options">{value.items.map((item, index) => <div className="editor-option" key={item.id}><div className="editor-card-head"><b>{'Elemento ' + (index + 1)}</b><button type="button" className="remove-button" onClick={() => removeItem(item.id)}>×</button></div><div className="form-grid"><label>Texto<input value={item.label} onChange={(event) => updateItem(item.id, { label: event.target.value })} /></label><label>Categoría correcta<select value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value })}>{value.categories.filter(Boolean).map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div></div>)}</div></section>
+  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE CLASIFICACIÓN</p><b>Categorías y elementos</b></div><button type="button" className="text-button" onClick={addItem} disabled={value.items.length >= SORTING_LIMITS.maxItems}>＋ Agregar elemento</button></div><label>Contexto o criterio de análisis (opcional)<textarea rows={2} maxLength={SORTING_LIMITS.context} value={value.context} onChange={(event) => onChange({ ...value, context: event.target.value })} placeholder="Marco teórico o situación que explica bajo qué criterio deben clasificarse los elementos." /></label><p className="editor-help">Define entre 2 y 6 categorías únicas y asigna elementos en al menos dos categorías distintas. El estudiante verá las tarjetas desordenadas para arrastrar o tocar.</p><div className="category-editor"><div className="block-heading"><b>Categorías destino</b><button type="button" className="text-button" onClick={addCategory} disabled={value.categories.length >= SORTING_LIMITS.maxCategories}>＋ Agregar categoría</button></div>{value.categories.map((category, index) => <div className="repeatable-row" key={'category-' + index}><input maxLength={SORTING_LIMITS.categoryName} value={category} placeholder={'Categoría ' + (index + 1)} onChange={(event) => updateCategory(index, event.target.value)} /><button type="button" className="remove-button" onClick={() => removeCategory(index)} disabled={value.categories.length <= SORTING_LIMITS.minCategories}>×</button></div>)}</div><div className="editor-options">{value.items.map((item, index) => <div className="editor-option" key={item.id}><div className="editor-card-head"><b>{'Elemento ' + (index + 1)}</b><button type="button" className="remove-button" onClick={() => removeItem(item.id)} disabled={value.items.length <= SORTING_LIMITS.minItems}>×</button></div><div className="form-grid"><label>Texto<input maxLength={SORTING_LIMITS.itemLabel} value={item.label} onChange={(event) => updateItem(item.id, { label: event.target.value })} /></label><label>Categoría correcta<select value={item.category} onChange={(event) => updateItem(item.id, { category: event.target.value })}><option value="">— Selecciona categoría —</option>{value.categories.filter(Boolean).map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div></div>)}</div><label>Pista orientadora para el estudiante *<textarea rows={2} maxLength={SORTING_LIMITS.hint} value={value.hint} onChange={(event) => onChange({ ...value, hint: event.target.value })} placeholder="Se muestra tras confirmar toda la clasificación, igual si acierta o falla. No debe revelar a qué categoría va cada elemento." /></label><label>Explicación privada (opcional)<textarea rows={2} maxLength={SORTING_LIMITS.explanation} value={value.explanation} onChange={(event) => onChange({ ...value, explanation: event.target.value })} placeholder="Justificación de la clasificación correcta. Solo la ven el docente y el CSV." /></label></section>
+}
+
+function sortingEditorToDefinition(prompt: string, value: ActivityEditorState['sorting']) {
+  return {
+    type: 'sorting' as const,
+    id: 'editor',
+    prompt,
+    categories: value.categories,
+    items: value.items,
+    hint: value.hint,
+    ...(value.context.trim() ? { context: value.context } : {}),
+    ...(value.explanation.trim() ? { explanation: value.explanation } : {}),
+  }
+}
+
+function sortingIssueMessage(path: string, message: string): string {
+  const field: Record<string, string> = {
+    prompt: 'Consigna general',
+    categories: 'Categorías',
+    items: 'Elementos',
+    hint: 'Pista orientadora',
+    context: 'Contexto',
+    explanation: 'Explicación privada',
+  }
+  if (path.startsWith('categories[') || path.startsWith('items[')) return message
+  if (path === 'items') return message
+  return (field[path] ?? path) + ': ' + message
 }
 
 function OrderingEditor({ value, onChange }: { value: ActivityEditorState['ordering']; onChange: (value: ActivityEditorState['ordering']) => void }) {
-  const updateStep = (index: number, next: string) => onChange({ steps: value.steps.map((step, stepIndex) => stepIndex === index ? next : step) })
-  const addStep = () => onChange({ steps: [...value.steps, ''] })
-  const removeStep = (index: number) => onChange({ steps: value.steps.length > 2 ? value.steps.filter((_, stepIndex) => stepIndex !== index) : value.steps })
-  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE ORDENAMIENTO</p><b>Secuencia correcta del proceso</b></div><button type="button" className="text-button" onClick={addStep}>＋ Agregar paso</button></div><p className="editor-help">El estudiante verá los pasos mezclados y deberá ordenarlos.</p><div className="editor-options">{value.steps.map((step, index) => <div className="repeatable-row editor-step" key={'step-' + index}><span className="step-number">{index + 1}</span><input value={step} placeholder="Describe el paso" onChange={(event) => updateStep(index, event.target.value)} /><button type="button" className="remove-button" onClick={() => removeStep(index)}>×</button></div>)}</div></section>
+  const updateStep = (index: number, next: string) => onChange({ ...value, steps: value.steps.map((step, stepIndex) => stepIndex === index ? next : step) })
+  const addStep = () => value.steps.length < ORDERING_LIMITS.maxSteps ? onChange({ ...value, steps: [...value.steps, ''] }) : undefined
+  const removeStep = (index: number) => onChange({ ...value, steps: value.steps.length > ORDERING_LIMITS.minSteps ? value.steps.filter((_, stepIndex) => stepIndex !== index) : value.steps })
+  const moveStep = (index: number, direction: -1 | 1) => {
+    const target = index + direction
+    if (target < 0 || target >= value.steps.length) return
+    const nextSteps = [...value.steps]
+    const tmp = nextSteps[index]
+    nextSteps[index] = nextSteps[target]
+    nextSteps[target] = tmp
+    onChange({ ...value, steps: nextSteps })
+  }
+  return (
+    <section className="editor-section">
+      <div className="editor-heading">
+        <div>
+          <p className="eyebrow">EDITOR DE ORDENAMIENTO</p>
+          <b>Secuencia correcta del proceso</b>
+        </div>
+        <button type="button" className="text-button" onClick={addStep} disabled={value.steps.length >= ORDERING_LIMITS.maxSteps}>
+          ＋ Agregar paso
+        </button>
+      </div>
+      <label>
+        Contexto o situación del proceso (opcional)
+        <textarea
+          rows={2}
+          maxLength={ORDERING_LIMITS.context}
+          value={value.context}
+          onChange={(event) => onChange({ ...value, context: event.target.value })}
+          placeholder="Marco explicativo del proceso, caso práctico o experimento a secuenciar."
+        />
+      </label>
+      <p className="editor-help">
+        Escribe entre 3 y 8 pasos en el orden exacto y correcto. El estudiante los recibirá desordenados determinísticamente para ordenarlos mediante arrastre o flechas.
+      </p>
+      <div className="editor-options">
+        {value.steps.map((step, index) => (
+          <div className="repeatable-row editor-step" key={'step-' + index}>
+            <span className="step-number">{index + 1}</span>
+            <input
+              maxLength={ORDERING_LIMITS.stepText}
+              value={step}
+              placeholder={`Describe el paso ${index + 1}`}
+              onChange={(event) => updateStep(index, event.target.value)}
+            />
+            <div className="step-arrows">
+              <button
+                type="button"
+                className="step-arrow-btn"
+                disabled={index === 0}
+                onClick={() => moveStep(index, -1)}
+                title="Subir paso"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="step-arrow-btn"
+                disabled={index === value.steps.length - 1}
+                onClick={() => moveStep(index, 1)}
+                title="Bajar paso"
+              >
+                ↓
+              </button>
+            </div>
+            <button
+              type="button"
+              className="remove-button"
+              onClick={() => removeStep(index)}
+              disabled={value.steps.length <= ORDERING_LIMITS.minSteps}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <label>
+        Pista orientadora para el estudiante *
+        <textarea
+          rows={2}
+          maxLength={ORDERING_LIMITS.hint}
+          value={value.hint}
+          onChange={(event) => onChange({ ...value, hint: event.target.value })}
+          placeholder="Se muestra tras confirmar la secuencia, igual si acierta o falla. No debe revelar las posiciones correctas."
+        />
+      </label>
+      <label>
+        Explicación privada (opcional)
+        <textarea
+          rows={2}
+          maxLength={ORDERING_LIMITS.explanation}
+          value={value.explanation}
+          onChange={(event) => onChange({ ...value, explanation: event.target.value })}
+          placeholder="Justificación de la secuencia correcta. Solo la ven el docente y el CSV."
+        />
+      </label>
+    </section>
+  )
+}
+
+function orderingEditorToDefinition(prompt: string, value: ActivityEditorState['ordering']) {
+  return {
+    type: 'ordering' as const,
+    id: 'editor',
+    prompt,
+    steps: value.steps,
+    hint: value.hint,
+    ...(value.context.trim() ? { context: value.context } : {}),
+    ...(value.explanation.trim() ? { explanation: value.explanation } : {}),
+  }
+}
+
+function orderingIssueMessage(path: string, message: string): string {
+  const field: Record<string, string> = {
+    prompt: 'Consigna general',
+    steps: 'Pasos',
+    hint: 'Pista orientadora',
+    context: 'Contexto',
+    explanation: 'Explicación privada',
+  }
+  if (path.startsWith('steps[')) return message
+  return (field[path] ?? path) + ': ' + message
 }
 
 function SingleChoiceEditor({ value, onChange }: { value: ActivityEditorState['singleChoice']; onChange: (value: ActivityEditorState['singleChoice']) => void }) {
   const updateOption = (id: string, patch: Partial<ChoiceOption>) => onChange({ ...value, options: value.options.map((option) => option.id === id ? { ...option, ...patch } : option) })
-  const addOption = () => onChange({ ...value, options: [...value.options, { id: makeEditorId('choice-'), label: '', correct: false }] })
-  const removeOption = (id: string) => onChange({ ...value, options: value.options.length > 2 ? value.options.filter((option) => option.id !== id) : value.options })
-  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE SELECCIÓN MÚLTIPLE</p><b>Opciones con una sola respuesta correcta</b></div><button type="button" className="text-button" onClick={addOption}>＋ Agregar opción</button></div><p className="editor-help">Aunque el formato se llama selección múltiple, esta versión valida una sola opción correcta.</p><div className="editor-options">{value.options.map((option, index) => <div className="editor-option choice-editor" key={option.id}><div className="editor-card-head"><b>{'Opción ' + (index + 1)}</b><button type="button" className="remove-button" onClick={() => removeOption(option.id)}>×</button></div><div className="choice-line"><input value={option.label} onChange={(event) => updateOption(option.id, { label: event.target.value })} placeholder="Texto de la opción" /><label className="radio-row"><input type="radio" name="single-choice-correct" checked={option.correct} onChange={() => onChange({ ...value, options: value.options.map((item) => ({ ...item, correct: item.id === option.id })) })} /> Correcta</label></div></div>)}</div></section>
+  const addOption = () => value.options.length < SINGLE_CHOICE_LIMITS.maxOptions ? onChange({ ...value, options: [...value.options, { id: makeEditorId('choice-'), label: '', correct: false }] }) : undefined
+  const removeOption = (id: string) => onChange({ ...value, options: value.options.length > SINGLE_CHOICE_LIMITS.minOptions ? value.options.filter((option) => option.id !== id) : value.options })
+  return <section className="editor-section"><div className="editor-heading"><div><p className="eyebrow">EDITOR DE SELECCIÓN MÚLTIPLE</p><b>Opciones con una sola respuesta correcta</b></div><button type="button" className="text-button" onClick={addOption} disabled={value.options.length >= SINGLE_CHOICE_LIMITS.maxOptions}>＋ Agregar opción</button></div><label>Contexto o caso (opcional)<textarea rows={2} maxLength={SINGLE_CHOICE_LIMITS.context} value={value.context} onChange={(event) => onChange({ ...value, context: event.target.value })} placeholder="Situación, dato o fragmento previo que el estudiante debe analizar antes de elegir." /></label><p className="editor-help">Define entre 2 y 6 opciones distintas y marca explícitamente cuál es la única opción correcta.</p><div className="editor-options">{value.options.map((option, index) => <div className="editor-option choice-editor" key={option.id}><div className="editor-card-head"><b>{'Opción ' + (index + 1)}</b><button type="button" className="remove-button" onClick={() => removeOption(option.id)} disabled={value.options.length <= SINGLE_CHOICE_LIMITS.minOptions}>×</button></div><div className="choice-line"><input maxLength={SINGLE_CHOICE_LIMITS.optionLabel} value={option.label} onChange={(event) => updateOption(option.id, { label: event.target.value })} placeholder="Texto de la opción" /><label className="radio-row"><input type="radio" name="single-choice-correct" checked={option.correct} onChange={() => onChange({ ...value, options: value.options.map((item) => ({ ...item, correct: item.id === option.id })) })} /> Correcta</label></div></div>)}</div><label>Pista orientadora para el estudiante *<textarea rows={2} maxLength={SINGLE_CHOICE_LIMITS.hint} value={value.hint} onChange={(event) => onChange({ ...value, hint: event.target.value })} placeholder="Se muestra tras confirmar, igual si acierta o falla. No debe revelar cuál opción es la correcta." /></label><label>Explicación privada (opcional)<textarea rows={2} maxLength={SINGLE_CHOICE_LIMITS.explanation} value={value.explanation} onChange={(event) => onChange({ ...value, explanation: event.target.value })} placeholder="Justificación de la opción correcta. Solo la ven el docente y el CSV." /></label><p className="editor-help">El estudiante ve el contexto, la pregunta y las opciones sin saber cuál es la correcta. Tras confirmar recibe únicamente la pista orientadora.</p></section>
+}
+
+function singleChoiceEditorToDefinition(prompt: string, value: ActivityEditorState['singleChoice']) {
+  return {
+    type: 'singleChoice' as const,
+    id: 'editor',
+    prompt,
+    options: value.options,
+    hint: value.hint,
+    ...(value.context.trim() ? { context: value.context } : {}),
+    ...(value.explanation.trim() ? { explanation: value.explanation } : {}),
+  }
+}
+
+function singleChoiceIssueMessage(path: string, message: string): string {
+  const field: Record<string, string> = {
+    prompt: 'Consigna general',
+    options: 'Opciones',
+    correct: 'Opción correcta',
+    hint: 'Pista orientadora',
+    context: 'Contexto',
+    explanation: 'Explicación privada',
+  }
+  if (path === 'correct') return message
+  if (path.startsWith('options[')) return message
+  return (field[path] ?? path) + ': ' + message
 }
 
 function SpecificActivityEditor({ type, value, onChange }: { type: ActivityType; value: ActivityEditorState; onChange: (value: ActivityEditorState) => void }) {
-  if (type === 'scenario') return <ScenarioEditor value={value.scenario} onChange={(scenario) => onChange({ ...value, scenario })} />
   if (type === 'trueFalse') return <TrueFalseEditor value={value.trueFalse} onChange={(trueFalse) => onChange({ ...value, trueFalse })} />
+  if (type === 'singleChoice') return <SingleChoiceEditor value={value.singleChoice} onChange={(singleChoice) => onChange({ ...value, singleChoice })} />
   if (type === 'matching') return <MatchingEditor value={value.matching} onChange={(matching) => onChange({ ...value, matching })} />
   if (type === 'sorting') return <SortingEditor value={value.sorting} onChange={(sorting) => onChange({ ...value, sorting })} />
   if (type === 'ordering') return <OrderingEditor value={value.ordering} onChange={(ordering) => onChange({ ...value, ordering })} />
-  return <SingleChoiceEditor value={value.singleChoice} onChange={(singleChoice) => onChange({ ...value, singleChoice })} />
+  return <ScenarioEditor value={value.scenario} onChange={(scenario) => onChange({ ...value, scenario })} />
 }
 
 function ActivityForm({ initialType, template, onCancel, onSave }: { initialType: ActivityType; template?: EvaluationTemplate; onCancel: () => void; onSave: (activity: Activity) => void }) {
@@ -1798,7 +2422,7 @@ function ActivityForm({ initialType, template, onCancel, onSave }: { initialType
   const [title, setTitle] = useState(template ? template.title + ' · ' + types[initialType].label : 'Nueva actividad')
   const [prompt, setPrompt] = useState(template?.objective ?? 'Escribe aquí la consigna de aprendizaje.')
   const [topic, setTopic] = useState(template?.subject ?? 'Convivencia')
-  const [difficulty, setDifficulty] = useState<Activity['difficulty']>(template?.difficulty ?? 'Inicial')
+  const difficulty: Activity['difficulty'] = template?.difficulty ?? 'Intermedio'
   const [feedback, setFeedback] = useState('Relaciona tu respuesta con el objetivo de aprendizaje y revisa la evidencia del contenido.')
   const [editorState, setEditorState] = useState<ActivityEditorState>(() => createEditorState(template))
   const [error, setError] = useState('')
@@ -1812,11 +2436,11 @@ function ActivityForm({ initialType, template, onCancel, onSave }: { initialType
     event.preventDefault()
     const validation = validateActivityEditor(type, title, prompt, editorState)
     if (validation) return setError(validation)
-    onSave(editorStateToActivity(type, editorState, { templateId: template?.id, title: title.trim(), topic: topic.trim(), difficulty: template?.difficulty ?? difficulty, prompt: prompt.trim(), feedback: feedback.trim() }))
+    onSave(editorStateToActivity(type, editorState, { templateId: template?.id, title: title.trim(), topic: topic.trim(), difficulty, prompt: prompt.trim(), feedback: feedback.trim() }))
   }
-  return <div className="modal-backdrop"><form className="modal-card activity-editor-modal" onSubmit={save}><div className="modal-head"><div><p className="eyebrow">{template ? 'ACTIVIDAD DESDE PLANTILLA' : 'ACTIVIDAD MANUAL'}</p><h2>Crear actividad</h2><p className="modal-subtitle">{template ? 'Contenido fuente: ' + template.title : 'Actividad adicional independiente.'}</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="form-grid"><label>Título de la actividad *<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Tema<input value={topic} onChange={(event) => setTopic(event.target.value)} /></label></div><label>Consigna general *<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={2} /></label><div className="form-grid"><label>Dificultad<select value={template?.difficulty ?? difficulty} disabled={Boolean(template)} onChange={(event) => setDifficulty(event.target.value as Activity['difficulty'])}><option>Inicial</option><option>Intermedio</option><option>Avanzado</option></select></label><label>Feedback general<textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={2} /></label></div><label>Tipo de actividad<select value={type} onChange={(event) => changeType(event.target.value as ActivityType)}>{availableTypes.map((key) => <option key={key} value={key}>{types[key].label}</option>)}</select><span className="field-hint">{types[type].description}</span></label><SpecificActivityEditor type={type} value={editorState} onChange={setEditorState} />{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Esta actividad guarda un esquema específico para {types[type].label.toLowerCase()}. La aprobación docente ocurre en la plantilla seleccionada.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button className="primary-button">Crear actividad publicada</button></div></form></div>
+  return <div className="modal-backdrop"><form className="modal-card activity-editor-modal" onSubmit={save}><div className="modal-head"><div><p className="eyebrow">{template ? 'ACTIVIDAD DESDE PLANTILLA' : 'ACTIVIDAD MANUAL'}</p><h2>Crear actividad</h2><p className="modal-subtitle">{template ? 'Contenido fuente: ' + template.title : 'Actividad adicional independiente.'}</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="form-grid"><label>Título de la actividad *<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Tema<input value={topic} onChange={(event) => setTopic(event.target.value)} /></label></div><label>Consigna general *<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={2} /></label><label>Feedback general<textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={2} /></label><label>Tipo de actividad<select value={type} onChange={(event) => changeType(event.target.value as ActivityType)}>{availableTypes.map((key) => <option key={key} value={key}>{types[key].label}</option>)}</select><span className="field-hint">{types[type].description}</span></label><SpecificActivityEditor type={type} value={editorState} onChange={setEditorState} />{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Esta actividad guarda un esquema específico para {types[type].label.toLowerCase()}. La aprobación docente ocurre en la plantilla seleccionada.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button className="primary-button">Crear actividad publicada</button></div></form></div>
 }
-function ProposalsView({ activities, hasDraft, onReview, onContinueDraft, onHome }: { activities: Activity[]; hasDraft: boolean; onReview: (id: string, status: 'published' | 'draft') => void; onContinueDraft: () => void; onHome: () => void }) { return <><PageIntro eyebrow="REVISIÓN Y CONTINUIDAD" title="Propuestas y borradores" description="Revisa actividades pendientes y retoma las plantillas que todavía no terminaste." onHome={onHome} />{hasDraft && <div className="admin-notice proposal-draft-notice"><span>✎</span><div><b>Tienes una plantilla en borrador.</b><p>La estructura se guardó automáticamente. Puedes continuarla desde el último punto antes de aprobarla.</p></div><button className="outline-button" onClick={onContinueDraft}>Continuar borrador</button></div>}<div className="review-banner"><span>◌</span><div><b>{activities.length ? `${activities.length} propuesta${activities.length === 1 ? '' : 's'} esperando revisión` : 'No hay propuestas pendientes'}</b><p>La publicación es una decisión del docente.</p></div></div><div className="proposal-list">{activities.length ? activities.map((activity) => <article className="proposal-card" key={activity.id}><div className={`list-type type-${activity.type}`}>{types[activity.type].icon}</div><div className="proposal-copy"><p className="eyebrow">PROPUESTA · {activity.topic.toUpperCase()}</p><h2>{activity.title}</h2><p>{activity.prompt}</p><small>Generada desde el formulario interno · sin archivos adjuntos</small></div><div className="proposal-actions"><button className="outline-button" onClick={() => onReview(activity.id, 'draft')}>Devolver</button><button className="primary-button" onClick={() => onReview(activity.id, 'published')}>✓ Aprobar</button></div></article>) : <div className="empty-state"><span>✓</span><h2>Buen trabajo, no hay propuestas pendientes.</h2><p>Las actividades nuevas aparecerán aquí antes de publicarse. Los borradores se retoman desde la tarjeta superior.</p></div>}</div></> }
+function ProposalsView({ activities, hasDraft, onReview, onContinueDraft, onHome }: { activities: Activity[]; hasDraft: boolean; onReview: (id: string, status: 'published' | 'draft') => void; onContinueDraft: () => void; onHome: () => void }) { return <><PageIntro eyebrow="REVISIÓN Y CONTINUIDAD" title="Propuestas y borradores" description="Revisa actividades pendientes y retoma las plantillas que todavía no terminaste." />{hasDraft && <div className="admin-notice proposal-draft-notice"><span>✎</span><div><b>Tienes una plantilla en borrador.</b><p>La estructura se guardó automáticamente. Puedes continuarla desde el último punto antes de aprobarla.</p></div><button className="outline-button" onClick={onContinueDraft}>Continuar borrador</button></div>}<div className="review-banner"><span>◌</span><div><b>{activities.length ? `${activities.length} propuesta${activities.length === 1 ? '' : 's'} esperando revisión` : 'No hay propuestas pendientes'}</b><p>La publicación es una decisión del docente.</p></div></div><div className="proposal-list">{activities.length ? activities.map((activity) => <article className="proposal-card" key={activity.id}><div className={`list-type type-${activity.type}`}>{types[activity.type].icon}</div><div className="proposal-copy"><p className="eyebrow">PROPUESTA · {activity.topic.toUpperCase()}</p><h2>{activity.title}</h2><p>{activity.prompt}</p><small>Generada desde el formulario interno · sin archivos adjuntos</small></div><div className="proposal-actions"><button className="outline-button" onClick={() => onReview(activity.id, 'draft')}>Devolver</button><button className="primary-button" onClick={() => onReview(activity.id, 'published')}>✓ Aprobar</button></div></article>) : <div className="empty-state"><span>✓</span><h2>Buen trabajo, no hay propuestas pendientes.</h2><p>Las actividades nuevas aparecerán aquí antes de publicarse. Los borradores se retoman desde la tarjeta superior.</p></div>}</div></> }
 
 
 function roomStatusLabel(status: RoomStatus): string {
@@ -1828,7 +2452,7 @@ function RoomsView({ rooms, activities, onCreate, onTransition, onDuplicate, onS
   const [showBuilder, setShowBuilder] = useState(false)
   const publishedActivities = activities.filter((item) => item.status === 'published')
   return <>
-    <PageIntro eyebrow="EXPERIENCIAS EN VIVO" title="Salas para tu grupo" description="Configura, abre y controla cada evaluación desde un solo lugar." action={<div className="room-create-actions"><button className="outline-button" onClick={() => setShowBuilder(true)}>⚙ Ajustes del examen</button><button className="primary-button" onClick={() => setShowBuilder(true)}>＋ Nueva sala</button></div>} onHome={onHome} />
+    <PageIntro eyebrow="EXPERIENCIAS EN VIVO" title="Salas para tu grupo" description="Configura, abre y controla cada evaluación desde un solo lugar." action={<div className="room-create-actions"><button className="outline-button" onClick={() => setShowBuilder(true)}>⚙ Ajustes del examen</button><button className="primary-button" onClick={() => setShowBuilder(true)}>＋ Nueva sala</button></div>} />
     <div className="room-rules"><span>01</span><p><b>Lista para iniciar</b><br /><small>Revisa los ajustes antes de abrirla.</small></p><span>02</span><p><b>En espera</b><br /><small>Comparte el código y espera al grupo.</small></p><span>03</span><p><b>En curso</b><br /><small>Al iniciar, la sala queda bloqueada.</small></p></div>
     <div className="rooms-list">{rooms.map((room) => <article className={'room-card room-' + room.status} key={room.id}><div className="room-card-head"><div><span className={'room-status ' + room.status} /> {roomStatusLabel(room.status)}<h2>{room.name}</h2><p className="room-instructions">{room.instructions}</p></div><div className="room-code"><small>CÓDIGO DE ACCESO</small><b>{room.code}</b>{room.status !== 'archived' && room.status !== 'finished' && <button className="text-button" onClick={() => onShare(room)}>Copiar código</button>}</div></div><div className="room-card-meta"><span>⌘ {room.questionCount} preguntas</span><span>♧ Máx. {room.limit} estudiantes</span><span>◷ {room.time ? room.time + ' min' : 'Sin límite'}</span><span>◉ {room.scorePerQuestion} pts/pregunta</span></div><div className="room-activities">{room.activities.map((id, index) => { const activity = activities.find((item) => item.id === id); return <span key={id + '-' + index}><i>{index + 1}</i>{activity?.title ?? 'Actividad'}</span> })}</div><div className="room-card-actions">{room.status === 'ready' && <button className="primary-button" onClick={() => onTransition(room.id, 'waiting')}>Abrir sala</button>}{room.status === 'waiting' && <button className="primary-button" onClick={() => onTransition(room.id, 'active')}>▶ Iniciar evaluación</button>}{room.status === 'active' && <button className="primary-button" onClick={() => onTransition(room.id, 'finished')}>Finalizar evaluación</button>}{room.status === 'finished' && <><button className="outline-button" onClick={() => onDuplicate(room)}>Duplicar sala</button><button className="primary-button" onClick={() => onTransition(room.id, 'archived')}>Archivar sala</button></>}{room.status === 'archived' && <button className="outline-button" onClick={() => onDuplicate(room)}>Duplicar como nueva</button>}<button className="outline-button danger-button" onClick={() => onDelete(room)}>Eliminar sala</button></div></article>)}</div>
     {showBuilder && <RoomBuilder activities={publishedActivities} onCancel={() => setShowBuilder(false)} onSave={(settings) => { onCreate(settings); setShowBuilder(false) }} />}
@@ -1871,10 +2495,10 @@ function ResultsView({ attempts, rooms, onExport, onHome }: { attempts: StudentA
   const participation = filtered.length ? Math.round((answered / Math.max(questionTotal, 1)) * 100) : 0
   const accuracy = answered ? Math.round((filtered.reduce((total, attempt) => total + attempt.correctCount, 0) / answered) * 100) : 0
   return <>
-    <PageIntro eyebrow="DATOS PARA ACOMPAÑAR" title="Resultados privados" description="Revisa evidencias, respuestas, omisiones y tiempos sin exponer resultados frente al grupo." action={<div className="results-actions"><select value={roomFilter} onChange={(event) => { setRoomFilter(event.target.value); setSelectedId(null) }} aria-label="Filtrar por sala"><option value="all">Todas las salas</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select><button className="primary-button" onClick={onExport}>↓ Exportar CSV / Excel</button></div>} onHome={onHome} />
+    <PageIntro eyebrow="DATOS PARA ACOMPAÑAR" title="Resultados privados" description="Revisa evidencias, respuestas, omisiones y tiempos sin exponer resultados frente al grupo." action={<div className="results-actions"><select value={roomFilter} onChange={(event) => { setRoomFilter(event.target.value); setSelectedId(null) }} aria-label="Filtrar por sala"><option value="all">Todas las salas</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select><button className="primary-button" onClick={onExport}>↓ Exportar CSV / Excel</button></div>} />
     <div className="results-summary"><div><strong>{participation}%</strong><span>respuestas registradas</span></div><div><strong>{accuracy}%</strong><span>aciertos de respondidas</span></div><div><strong>{filtered.length}</strong><span>intentos registrados</span></div><div><strong>{maxScore ? `${score}/${maxScore}` : '—'}</strong><span>puntaje acumulado</span></div></div>
     <section className="panel results-panel"><div className="panel-heading"><div><h2>Intentos de estudiantes</h2><p>Selecciona un intento para ver el detalle por actividad.</p></div><span className="tag published">Privado</span></div>{filtered.length ? <div className="results-table-wrap"><table><thead><tr><th>Estudiante</th><th>Sala</th><th>Participación</th><th>Puntaje</th><th>Estado</th><th>Finalizó</th><th /></tr></thead><tbody>{filtered.map((attempt) => <tr key={attempt.id} className={selected?.id === attempt.id ? 'selected-result' : ''}><td><b>{attempt.studentName}</b><small>{attempt.roomCode}</small></td><td>{attempt.roomName}</td><td>{attempt.answeredCount}/{attempt.totalQuestions} respondidas<br /><small>{attempt.omittedCount} omitidas</small></td><td><b>{attempt.score}/{attempt.maxScore}</b><small>{attempt.correctCount} correctas</small></td><td><span className={`result-status ${attempt.status}`}>{attempt.status === 'timeout' ? 'Tiempo agotado' : 'Finalizada'}</span></td><td>{formatDate(attempt.finishedAt)}</td><td><button className="text-button" onClick={() => { setSelectedId(attempt.id); window.setTimeout(() => document.getElementById('result-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }}>Ver detalle</button></td></tr>)}</tbody></table></div> : <div className="results-empty"><span>↗</span><h3>Aún no hay intentos registrados</h3><p>Cuando un estudiante termine una sala, sus respuestas aparecerán aquí. El registro se guarda localmente en esta versión demo.</p></div>}</section>
-    {selected && <section id="result-detail" className="panel result-detail"><div className="panel-heading"><div><p className="eyebrow">DETALLE DEL INTENTO</p><h2>{selected.studentName} · {selected.roomName}</h2><p>{formatDate(selected.startedAt)} → {formatDate(selected.finishedAt)} · {selected.events.length} eventos registrados</p></div><div className="detail-score"><strong>{selected.score}/{selected.maxScore}</strong><small>{selected.correctCount} correctas · {selected.omittedCount} omitidas</small></div></div><div className="results-table-wrap"><table><thead><tr><th>#</th><th>Actividad</th><th>Estado</th><th>Respuesta</th><th>Resultado</th><th>Tiempo</th></tr></thead><tbody>{selected.answers.map((answer) => <tr key={`${selected.id}-${answer.index}`}><td>{answer.index + 1}</td><td><b>{answer.activityTitle}</b><small>{types[answer.activityType].label}</small></td><td>{answer.status === 'answered' ? 'Respondida' : 'Omitida'}</td><td>{answer.response || 'Sin respuesta'}</td><td>{answer.correct === null ? 'No evaluada' : answer.correct ? `Correcta · ${answer.score} pts` : 'Orientación enviada'}</td><td>{answer.timeSeconds}s</td></tr>)}</tbody></table></div><div className="event-strip">{selected.events.slice(-5).map((event, index) => <span key={`${event.at}-${index}`}><b>{event.type === 'answer_submitted' ? 'Respuesta' : event.type === 'omitted' ? 'Omisión' : event.type === 'navigated_back' ? 'Regreso' : event.type === 'timeout' ? 'Tiempo agotado' : event.type === 'finished' ? 'Cierre' : 'Ingreso'}</b>{formatDate(event.at)}</span>)}</div></section>}
+    {selected && <section id="result-detail" className="panel result-detail"><div className="panel-heading"><div><p className="eyebrow">DETALLE DEL INTENTO</p><h2>{selected.studentName} · {selected.roomName}</h2><p>{formatDate(selected.startedAt)} → {formatDate(selected.finishedAt)} · {selected.events.length} eventos registrados</p></div><div className="detail-score"><strong>{selected.score}/{selected.maxScore}</strong><small>{selected.correctCount} correctas · {selected.omittedCount} omitidas</small></div></div><div className="results-table-wrap"><table><thead><tr><th>#</th><th>Actividad</th><th>Estado</th><th>Respuesta</th><th>Resultado</th><th>Explicación / Pista</th><th>Tiempo</th></tr></thead><tbody>{selected.answers.map((answer) => <tr key={`${selected.id}-${answer.index}`}><td>{answer.index + 1}</td><td><b>{answer.activityTitle}</b><small>{types[answer.activityType].label}</small></td><td>{answer.status === 'answered' ? 'Respondida' : 'Omitida'}</td><td>{answer.response || 'Sin respuesta'}</td><td>{answer.correct === null ? 'No evaluada' : answer.correct ? `Correcta · ${answer.score} pts` : 'Orientación enviada'}</td><td>{answer.explanation ? <div><b>Explicación:</b> {answer.explanation}{answer.hint ? <><br /><small>Pista: {answer.hint}</small></> : null}</div> : answer.hint || '—'}</td><td>{answer.timeSeconds}s</td></tr>)}</tbody></table></div><div className="event-strip">{selected.events.slice(-5).map((event, index) => <span key={`${event.at}-${index}`}><b>{event.type === 'answer_submitted' ? 'Respuesta' : event.type === 'omitted' ? 'Omisión' : event.type === 'navigated_back' ? 'Regreso' : event.type === 'timeout' ? 'Tiempo agotado' : event.type === 'finished' ? 'Cierre' : 'Ingreso'}</b>{formatDate(event.at)}</span>)}</div></section>}
     <div className="privacy-note">🔒 Privacidad activa · estos datos solo están disponibles para el docente y el administrador. El estudiante no ve su puntaje final.</div>
   </>
 }
@@ -1910,12 +2534,338 @@ function PlayView({ activity, index, totalCount, allowBack, timeLimit, startedAt
   const runtime = activityRuntime(item)
   const canSubmit = isResponseComplete(item, draftResponse)
   const changeSimple = (value: string) => setDraftResponse(item.type === 'trueFalse' ? { type: 'trueFalse', value } : { type: 'singleChoice', value })
-  return <div className="play-wrap"><div className="play-top"><span>ACTIVIDAD {index + 1} DE {totalCount}</span><span>{secondsLeft === null ? 'Sin límite de tiempo' : 'Tiempo restante ' + formatSeconds(secondsLeft)}</span></div><div className="play-card"><div className={'activity-type type-' + item.type}><span>{types[item.type].icon}</span><small>{types[item.type].label}</small></div><h1>{item.title}</h1><p className="play-prompt">{item.type === 'trueFalse' ? runtime.trueFalse.statement : item.prompt}</p><div className={'answer-area answer-' + item.type}>{item.type === 'scenario' && draftResponse.type === 'scenario' ? <ScenarioQuestion runtime={runtime.scenario} response={draftResponse} disabled={submitted} onChange={(choices) => setDraftResponse({ type: 'scenario', choices })} /> : item.type === 'matching' && draftResponse.type === 'matching' ? <MatchingQuestion runtime={runtime.matching} response={draftResponse} disabled={submitted} onChange={(pairs) => setDraftResponse({ type: 'matching', pairs })} /> : item.type === 'sorting' && draftResponse.type === 'sorting' ? <SortingQuestion runtime={runtime.sorting} response={draftResponse} disabled={submitted} onChange={(assignments) => setDraftResponse({ type: 'sorting', assignments })} /> : item.type === 'ordering' && draftResponse.type === 'ordering' ? <OrderingQuestion steps={runtime.ordering.steps} response={draftResponse} disabled={submitted} onChange={(order) => setDraftResponse({ type: 'ordering', order })} /> : (item.type === 'trueFalse' ? ['Verdadero', 'Falso'] : runtime.singleChoice.options.map((option) => option.label)).map((option) => <button key={option} className={'answer-option ' + ((draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') && draftResponse.value === option ? 'chosen' : '')} onClick={() => !submitted && changeSimple(option)} disabled={submitted}><span className="option-mark">{(draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') && draftResponse.value === option ? '✓' : '○'}</span>{option}</button>)}</div>{submitted && <div className="feedback-box"><span>✦</span><div><b>Respuesta registrada.</b><p>{item.feedback}</p></div></div>}<div className="play-actions">{allowBack && index > 0 && <button className="outline-button" onClick={onPrevious}>← Anterior</button>}<div className="play-actions-right">{!submitted && <button className="outline-button" onClick={onSkip}>Omitir por ahora</button>}{submitted ? <button className="primary-button" onClick={onNext}>{index + 1 >= totalCount ? 'Finalizar evaluación →' : 'Siguiente actividad →'}</button> : <button className="primary-button" disabled={!canSubmit} onClick={() => onSubmit(draftResponse)}>Comprobar respuesta</button>}</div></div></div></div>
+  return <div className="play-wrap"><div className="play-top"><span>ACTIVIDAD {index + 1} DE {totalCount}</span><span>{secondsLeft === null ? 'Sin límite de tiempo' : 'Tiempo restante ' + formatSeconds(secondsLeft)}</span></div><div className="play-card"><div className={'activity-type type-' + item.type}><span>{types[item.type].icon}</span><small>{types[item.type].label}</small></div><h1>{item.title}</h1>{item.type === 'trueFalse' && runtime.trueFalse.context ? <p className="editor-help">{runtime.trueFalse.context}</p> : item.type === 'singleChoice' && runtime.singleChoice.context ? <p className="editor-help">{runtime.singleChoice.context}</p> : item.type === 'matching' && runtime.matching.context ? <p className="editor-help">{runtime.matching.context}</p> : item.type === 'sorting' && runtime.sorting.context ? <p className="editor-help">{runtime.sorting.context}</p> : item.type === 'ordering' && runtime.ordering.context ? <p className="editor-help">{runtime.ordering.context}</p> : null}<p className="play-prompt">{item.type === 'trueFalse' ? runtime.trueFalse.statement : item.prompt}</p><div className={'answer-area answer-' + item.type}>{item.type === 'scenario' && draftResponse.type === 'scenario' ? <ScenarioQuestion runtime={runtime.scenario} response={draftResponse} disabled={submitted} onChange={(choices) => setDraftResponse({ type: 'scenario', choices })} /> : item.type === 'matching' && draftResponse.type === 'matching' ? <MatchingQuestion runtime={runtime.matching} response={draftResponse} disabled={submitted} onChange={(pairs) => setDraftResponse({ type: 'matching', pairs })} /> : item.type === 'sorting' && draftResponse.type === 'sorting' ? <SortingQuestion runtime={runtime.sorting} response={draftResponse} disabled={submitted} onChange={(assignments) => setDraftResponse({ type: 'sorting', assignments })} /> : item.type === 'ordering' && draftResponse.type === 'ordering' ? <OrderingQuestion runtime={runtime.ordering} response={draftResponse} disabled={submitted} onChange={(order) => setDraftResponse({ type: 'ordering', order })} /> : (item.type === 'trueFalse' ? ['Verdadero', 'Falso'] : runtime.singleChoice.options.map((option) => option.label)).map((option) => <button key={option} className={'answer-option ' + ((draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') && draftResponse.value === option ? 'chosen' : '')} onClick={() => !submitted && changeSimple(option)} disabled={submitted}><span className="option-mark">{(draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') && draftResponse.value === option ? '✓' : '○'}</span>{option}</button>)}</div>{submitted && <div className="feedback-box"><span>✦</span><div><b>Respuesta registrada.</b>{item.type === 'trueFalse' ? <p>{runtime.trueFalse.hint ?? item.feedback}</p> : item.type === 'singleChoice' ? <p>{runtime.singleChoice.hint ?? item.feedback}</p> : item.type === 'matching' ? <p>{runtime.matching.hint ?? item.feedback}</p> : item.type === 'sorting' ? <p>{runtime.sorting.hint ?? item.feedback}</p> : item.type === 'ordering' ? <p>{runtime.ordering.hint ?? item.feedback}</p> : item.type === 'scenario' ? <p>{runtime.scenario.hint ?? item.feedback}</p> : <p>{item.feedback}</p>}</div></div>}<div className="play-actions">{allowBack && index > 0 && <button className="outline-button" onClick={onPrevious}>← Anterior</button>}<div className="play-actions-right">{!submitted && <button className="outline-button" onClick={onSkip}>Omitir por ahora</button>}{submitted ? <button className="primary-button" onClick={onNext}>{index + 1 >= totalCount ? 'Finalizar evaluación →' : 'Siguiente actividad →'}</button> : <button className="primary-button" disabled={!canSubmit} onClick={() => onSubmit(draftResponse)}>Comprobar respuesta</button>}</div></div></div></div>
 }
-function ScenarioQuestion({ runtime, response, disabled, onChange }: { runtime: NonNullable<ActivityDetails['scenario']>; response: Extract<ActivityResponse, { type: 'scenario' }>; disabled: boolean; onChange: (choices: Record<string, string>) => void }) { return <div className="structured-question">{runtime.stages.map((stage) => <div className="scenario-stage" key={stage.id}><b>{stage.title}</b><p>{stage.prompt}</p><div className="answer-area">{stage.options.map((option) => <button key={option.id} className={'answer-option ' + (response.choices[stage.id] === option.text ? 'chosen' : '')} onClick={() => !disabled && onChange({ ...response.choices, [stage.id]: option.text })} disabled={disabled}><span className="option-mark">{response.choices[stage.id] === option.text ? '✓' : '○'}</span>{option.text}</button>)}</div></div>)}</div> }
-function MatchingQuestion({ runtime, response, disabled, onChange }: { runtime: NonNullable<ActivityDetails['matching']>; response: Extract<ActivityResponse, { type: 'matching' }>; disabled: boolean; onChange: (pairs: Record<string, string>) => void }) { const options = runtime.pairs.map((pair) => pair.right); return <div className="structured-question">{runtime.pairs.map((pair) => <label className="structured-row" key={pair.id}><b>{pair.left}</b><select value={response.pairs[pair.left] ?? ''} disabled={disabled} onChange={(event) => onChange({ ...response.pairs, [pair.left]: event.target.value })}><option value="">Elige una relación</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}</div> }
-function SortingQuestion({ runtime, response, disabled, onChange }: { runtime: NonNullable<ActivityDetails['sorting']>; response: Extract<ActivityResponse, { type: 'sorting' }>; disabled: boolean; onChange: (assignments: Record<string, string>) => void }) { const place = (itemId: string, category: string) => { if (!disabled) onChange({ ...response.assignments, [itemId]: category }) }; return <div className="structured-question"><p className="editor-help">Arrastra cada elemento a su categoría. También puedes usar el selector para facilitar el uso desde móvil.</p><div className="sorting-items">{runtime.items.filter((item) => !response.assignments[item.id]).map((item) => <div className="sorting-chip" key={item.id} draggable={!disabled} onDragStart={(event) => event.dataTransfer.setData('text/plain', item.id)}>{item.label}<span>⠿</span></div>)}</div><div className="sorting-categories">{runtime.categories.map((category) => <div className="sorting-drop" key={category} onDragOver={(event) => event.preventDefault()} onDrop={(event) => place(event.dataTransfer.getData('text/plain'), category)}><b>{category}</b>{runtime.items.filter((item) => response.assignments[item.id] === category).map((item) => <span key={item.id}>{item.label}</span>)}<small>Arrastra aquí</small></div>)}</div><div className="sorting-mobile-fallback">{runtime.items.map((item) => <label className="structured-row" key={`select-${item.id}`}><b>{item.label}</b><select value={response.assignments[item.id] ?? ''} disabled={disabled} onChange={(event) => place(item.id, event.target.value)}><option value="">Elige una categoría</option>{runtime.categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>)}</div></div> }
-function OrderingQuestion({ steps, response, disabled, onChange }: { steps: string[]; response: Extract<ActivityResponse, { type: 'ordering' }>; disabled: boolean; onChange: (order: string[]) => void }) { const move = (index: number, direction: -1 | 1) => { const target = index + direction; if (target < 0 || target >= response.order.length || disabled) return; const order = [...response.order]; [order[index], order[target]] = [order[target], order[index]]; onChange(order) }; return <div className="structured-question"><p className="editor-help">Ordena los pasos con las flechas.</p><div className="ordering-list">{response.order.map((item, index) => <div className="ordering-item" key={`${item}-${index}`}><div className="ordering-controls"><button type="button" onClick={() => move(index, -1)} disabled={disabled || index === 0} aria-label="Subir">↑</button><button type="button" onClick={() => move(index, 1)} disabled={disabled || index === response.order.length - 1} aria-label="Bajar">↓</button></div><b>{index + 1}</b><span>{item}</span></div>)}</div><small className="ordering-source">{steps.length} pasos en total</small></div> }
+function ScenarioQuestion({
+  runtime,
+  response,
+  disabled,
+  onChange,
+}: {
+  runtime: NonNullable<ActivityDetails['scenario']>;
+  response: Extract<ActivityResponse, { type: 'scenario' }>;
+  disabled: boolean;
+  onChange: (choices: Record<string, string>) => void;
+}) {
+  const totalStages = runtime.stages.length
+  const answeredStages = runtime.stages.filter((stage) => Boolean(response.choices[stage.id])).length
+
+  return (
+    <div className="structured-question scenario-board">
+      {runtime.situation && (
+        <div className="scenario-situation-box">
+          <div className="scenario-situation-header">
+            <span className="scenario-situation-icon">📋</span>
+            <b>Contexto del dilema / Situación</b>
+          </div>
+          <p className="scenario-situation-text">{runtime.situation}</p>
+        </div>
+      )}
+
+      <div className="scenario-progress-bar">
+        <span>Progreso de decisiones: <b>{answeredStages} de {totalStages}</b> {totalStages === 1 ? 'etapa completada' : 'etapas completadas'}</span>
+      </div>
+
+      <div className="scenario-stages-list">
+        {runtime.stages.map((stage, sIndex) => {
+          const selectedText = response.choices[stage.id]
+          const selectedOption = stage.options.find((opt) => opt.text === selectedText)
+          return (
+            <div key={stage.id} className={`scenario-stage-card ${selectedText ? 'stage-answered' : ''}`}>
+              <div className="scenario-stage-header">
+                <span className="scenario-stage-badge">Etapa {sIndex + 1}</span>
+                <h4 className="scenario-stage-title">{stage.title}</h4>
+              </div>
+              <p className="scenario-stage-prompt">{stage.prompt}</p>
+
+              <div className="scenario-options-grid">
+                {stage.options.map((option) => {
+                  const isSelected = selectedText === option.text
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={disabled}
+                      className={`scenario-choice-card ${isSelected ? 'chosen' : ''}`}
+                      onClick={() => {
+                        if (!disabled) {
+                          onChange({ ...response.choices, [stage.id]: option.text })
+                        }
+                      }}
+                    >
+                      <div className="scenario-choice-header">
+                        <span className="option-mark">{isSelected ? '✓' : '○'}</span>
+                        <span className="scenario-choice-text">{option.text}</span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {selectedOption && selectedOption.consequence && (
+                <div className="scenario-consequence-box">
+                  <div className="scenario-consequence-title">
+                    <span>⚡ Consecuencia de tu decisión:</span>
+                  </div>
+                  <p className="scenario-consequence-content">{selectedOption.consequence}</p>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+function MatchingQuestion({ runtime, response, disabled, onChange }: { runtime: NonNullable<ActivityDetails['matching']>; response: Extract<ActivityResponse, { type: 'matching' }>; disabled: boolean; onChange: (pairs: Record<string, string>) => void }) {
+  const [activeLeft, setActiveLeft] = useState<string | null>(null)
+  const rightOptions = scrambleRightOptions(runtime.pairs.map((pair) => pair.right))
+  const selectLeft = (leftText: string) => {
+    if (disabled) return
+    if (activeLeft === leftText) {
+      setActiveLeft(null)
+      return
+    }
+    setActiveLeft(leftText)
+  }
+  const selectRight = (rightText: string) => {
+    if (disabled) return
+    const targetLeft = activeLeft ?? runtime.pairs.find((pair) => !response.pairs[pair.left])?.left ?? null
+    if (!targetLeft) return
+    const nextPairs = { ...response.pairs }
+    Object.keys(nextPairs).forEach((key) => {
+      if (nextPairs[key] === rightText && key !== targetLeft) delete nextPairs[key]
+    })
+    nextPairs[targetLeft] = rightText
+    onChange(nextPairs)
+    const nextUnlinked = runtime.pairs.find((pair) => pair.left !== targetLeft && !nextPairs[pair.left])?.left ?? null
+    setActiveLeft(nextUnlinked)
+  }
+  const unlinkPair = (leftText: string) => {
+    if (disabled) return
+    const nextPairs = { ...response.pairs }
+    delete nextPairs[leftText]
+    onChange(nextPairs)
+    setActiveLeft(leftText)
+  }
+  return (
+    <div className="structured-question matching-board">
+      <p className="editor-help">Toca un concepto de la columna izquierda y luego toca su relación en la columna derecha para enlazarlos con el mismo número.</p>
+      <div className="matching-columns">
+        <div className="matching-column">
+          <span className="matching-col-title">Conceptos</span>
+          {runtime.pairs.map((pair, index) => {
+            const badgeNumber = index + 1
+            const linkedRight = response.pairs[pair.left]
+            const isSelected = activeLeft === pair.left
+            return (
+              <button
+                key={pair.id}
+                type="button"
+                disabled={disabled}
+                className={`matching-card left ${isSelected ? 'active' : ''} ${linkedRight ? 'linked' : ''}`}
+                onClick={() => selectLeft(pair.left)}
+              >
+                <span className={`matching-badge pair-tone-${(index % 6) + 1}`}>{badgeNumber}</span>
+                <span className="matching-card-text">
+                  <b>{pair.left}</b>
+                  {linkedRight && <small>Enlazado con: {linkedRight}</small>}
+                </span>
+                {linkedRight && !disabled && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="matching-unlink"
+                    title="Quitar enlace"
+                    onClick={(event) => { event.stopPropagation(); unlinkPair(pair.left) }}
+                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.stopPropagation(); unlinkPair(pair.left) } }}
+                  >
+                    ×
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        <div className="matching-column">
+          <span className="matching-col-title">Relaciones</span>
+          {rightOptions.map((option) => {
+            const linkedIndex = runtime.pairs.findIndex((pair) => response.pairs[pair.left] === option)
+            const linkedNumber = linkedIndex >= 0 ? linkedIndex + 1 : null
+            return (
+              <button
+                key={option}
+                type="button"
+                disabled={disabled}
+                className={`matching-card right ${linkedNumber ? 'linked' : ''} ${activeLeft ? 'ready-to-link' : ''}`}
+                onClick={() => selectRight(option)}
+              >
+                <span className={`matching-badge ${linkedNumber ? `pair-tone-${(linkedIndex % 6) + 1}` : 'unlinked'}`}>
+                  {linkedNumber ?? '○'}
+                </span>
+                <span className="matching-card-text">{option}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+function SortingQuestion({ runtime, response, disabled, onChange }: { runtime: NonNullable<ActivityDetails['sorting']>; response: Extract<ActivityResponse, { type: 'sorting' }>; disabled: boolean; onChange: (assignments: Record<string, string>) => void }) {
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
+  const scrambledItems = scrambleSortingItems(runtime.items)
+  const place = (itemId: string, category: string) => {
+    if (disabled || !itemId) return
+    onChange({ ...response.assignments, [itemId]: category })
+    setSelectedItemId(null)
+  }
+  const unplace = (itemId: string) => {
+    if (disabled) return
+    const next = { ...response.assignments }
+    delete next[itemId]
+    onChange(next)
+    setSelectedItemId(itemId)
+  }
+  return (
+    <div className="structured-question">
+      <p className="editor-help">Arrastra cada elemento a su categoría o toca una tarjeta y luego toca la caja de destino.</p>
+      <div className="sorting-items">
+        {scrambledItems.filter((item) => !response.assignments[item.id]).map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            disabled={disabled}
+            className={`sorting-chip ${selectedItemId === item.id ? 'active-chip' : ''}`}
+            draggable={!disabled}
+            onDragStart={(event) => event.dataTransfer.setData('text/plain', item.id)}
+            onClick={() => !disabled && setSelectedItemId((current) => current === item.id ? null : item.id)}
+          >
+            {item.label}
+            <span>⠿</span>
+          </button>
+        ))}
+      </div>
+      <div className="sorting-categories">
+        {runtime.categories.map((category) => (
+          <div
+            className={`sorting-drop ${selectedItemId ? 'ready-drop' : ''}`}
+            key={category}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => place(event.dataTransfer.getData('text/plain'), category)}
+            onClick={() => selectedItemId && place(selectedItemId, category)}
+          >
+            <b>{category}</b>
+            {scrambledItems.filter((item) => response.assignments[item.id] === category).map((item) => (
+              <span key={item.id} className="sorted-pill">
+                {item.label}
+                {!disabled && (
+                  <button
+                    type="button"
+                    className="sorted-remove"
+                    title="Devolver al banco"
+                    onClick={(event) => { event.stopPropagation(); unplace(item.id) }}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+            <small>{selectedItemId ? 'Toca aquí para colocar' : 'Arrastra o toca aquí'}</small>
+          </div>
+        ))}
+      </div>
+      <div className="sorting-mobile-fallback">
+        {scrambledItems.map((item) => (
+          <label className="structured-row" key={`select-${item.id}`}>
+            <b>{item.label}</b>
+            <select value={response.assignments[item.id] ?? ''} disabled={disabled} onChange={(event) => event.target.value ? place(item.id, event.target.value) : unplace(item.id)}>
+              <option value="">Elige una categoría</option>
+              {runtime.categories.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+function OrderingQuestion({ runtime, response, disabled, onChange }: { runtime: NonNullable<ActivityDetails['ordering']>; response: Extract<ActivityResponse, { type: 'ordering' }>; disabled: boolean; onChange: (order: string[]) => void }) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const currentOrder = response.order.length ? response.order : scrambleOrderingSteps(runtime.steps)
+
+  useEffect(() => {
+    if (!response.order.length && runtime.steps.length) {
+      onChange(scrambleOrderingSteps(runtime.steps))
+    }
+  }, [response.order.length, runtime.steps, onChange])
+
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction
+    if (target < 0 || target >= currentOrder.length || disabled) return
+    const order = [...currentOrder]
+    const tmp = order[index]
+    order[index] = order[target]
+    order[target] = tmp
+    onChange(order)
+  }
+
+  const handleDragStart = (index: number) => {
+    if (disabled) return
+    setDraggedIndex(index)
+  }
+
+  const handleDrop = (targetIndex: number) => {
+    if (disabled || draggedIndex === null || draggedIndex === targetIndex) return
+    const order = [...currentOrder]
+    const item = order.splice(draggedIndex, 1)[0]
+    order.splice(targetIndex, 0, item)
+    onChange(order)
+    setDraggedIndex(null)
+  }
+
+  return (
+    <div className="structured-question ordering-board">
+      <p className="editor-help">Ordena los pasos del proceso arrastrando las tarjetas o usando los botones ↑ y ↓.</p>
+      <div className="ordering-list">
+        {currentOrder.map((item, index) => (
+          <div
+            className={`ordering-item ${draggedIndex === index ? 'dragging' : ''}`}
+            key={`${item}-${index}`}
+            draggable={!disabled}
+            onDragStart={() => handleDragStart(index)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => handleDrop(index)}
+          >
+            <div className="ordering-drag-handle">⠿</div>
+            <span className="ordering-badge">{index + 1}</span>
+            <span className="ordering-text">{item}</span>
+            <div className="ordering-controls">
+              <button
+                type="button"
+                onClick={() => move(index, -1)}
+                disabled={disabled || index === 0}
+                aria-label="Subir paso"
+                title="Subir"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => move(index, 1)}
+                disabled={disabled || index === currentOrder.length - 1}
+                aria-label="Bajar paso"
+                title="Bajar"
+              >
+                ↓
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <small className="ordering-source">{runtime.steps.length} pasos en total</small>
+    </div>
+  )
+}
 
 function readStorage<T>(key: string, fallback: T): T { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback } catch { return fallback } }
 function readSessionStorage(key: string): string | null { try { return sessionStorage.getItem(key) } catch { return null } }

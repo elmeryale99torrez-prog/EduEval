@@ -28,6 +28,13 @@ describe('importación JSON de contenido', () => {
     if (result.ok) expect(Object.values(result.compatibility).every((item) => item.available)).toBe(true)
   })
 
+  it('asigna dificultad interna por defecto cuando no se envía en el JSON', () => {
+    const { difficulty: _omitted, ...contentWithoutDifficulty } = validDocument.content
+    const result = validateContentDocument({ ...validDocument, content: contentWithoutDifficulty })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.document.content.difficulty).toBe('Intermedio')
+  })
+
   it('rechaza JSON inválido con un mensaje orientado al docente', () => {
     const result = parseContentImport('{ contenido roto')
     expect(result.ok).toBe(false)

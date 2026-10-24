@@ -135,15 +135,20 @@ export function validateContentDocument(value: unknown): ContentImportResult {
   }
   const content = value.content
   extraKeys(content, contentKeys, 'content', issues)
-  const difficulty = content.difficulty
-  if (difficulty !== 'Inicial' && difficulty !== 'Intermedio' && difficulty !== 'Avanzado') issues.push({ path: 'content.difficulty', message: 'Debe ser Inicial, Intermedio o Avanzado.' })
+  const rawDifficulty = typeof content.difficulty === 'string' ? content.difficulty.trim() : ''
+  const difficulty: ImportedDifficulty = rawDifficulty === 'Inicial' || rawDifficulty === 'Intermedio' || rawDifficulty === 'Avanzado'
+    ? rawDifficulty
+    : 'Intermedio'
+  if (content.difficulty !== undefined && rawDifficulty !== '' && rawDifficulty !== 'Inicial' && rawDifficulty !== 'Intermedio' && rawDifficulty !== 'Avanzado') {
+    issues.push({ path: 'content.difficulty', message: 'Si se incluye, debe ser Inicial, Intermedio o Avanzado.' })
+  }
   const normalized: ImportedContent = {
     title: readString(content.title, 'content.title', issues, { required: true, max: 180 }),
     subject: readString(content.subject, 'content.subject', issues, { required: true, max: 120 }),
     description: readString(content.description, 'content.description', issues, { required: true, max: 1500 }),
     objective: readString(content.objective, 'content.objective', issues, { required: true, max: 1200 }),
     competency: readString(content.competency, 'content.competency', issues, { required: true, max: 1200 }),
-    difficulty: difficulty as ImportedDifficulty,
+    difficulty,
     concepts: readConcepts(content.concepts, issues),
     situations: readSituations(content.situations, issues),
     processSteps: readStringList(content.processSteps, 'content.processSteps', issues, 50),
@@ -172,12 +177,12 @@ export function detectContentCompatibility(content: ImportedContent): ContentCom
   const hasSteps = content.processSteps.length >= 2
   const hasCategories = content.categories.length >= 2
   return {
-    scenario: { available: hasSituations, reason: 'Agrega una situación con contexto, decisión y consecuencia.' },
     trueFalse: { available: hasConcepts || hasSituations, reason: 'Agrega un concepto con definición o una situación completa.' },
+    singleChoice: { available: hasConcepts || hasSituations, reason: 'Agrega conceptos o una situación completa.' },
     matching: { available: concepts.length >= 2, reason: 'Agrega al menos dos conceptos con definición.' },
     sorting: { available: hasCategories && hasConcepts, reason: 'Agrega al menos dos categorías y un concepto con definición.' },
     ordering: { available: hasSteps, reason: 'Agrega al menos dos pasos de proceso.' },
-    singleChoice: { available: hasConcepts || hasSituations, reason: 'Agrega conceptos o una situación completa.' },
+    scenario: { available: hasSituations, reason: 'Agrega una situación con contexto, decisión y consecuencia.' },
   }
 }
 
