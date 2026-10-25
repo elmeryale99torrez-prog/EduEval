@@ -696,3 +696,25 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
 - **Pendientes inmediatos:**
   - **Fase 4: Importación JSON y generador estructurado:** Actualizar `src/lib/contentImport.ts` y `buildActivitiesFromTemplate` en `src/App.tsx` para que las propuestas nazcan con el objeto `details` v1.2 de las 6 actividades y validación pedagógica estricta de compatibilidad.
 - Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 suites intactas) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores.
+
+
+### Etapa 9 — Escala móvil ampliada (+15%), optimización vertical de tarjetas métricas y depuración de textos superfluos — 2026-10-25
+
+- **Aumento de escala móvil del 15% sobre la versión antigua:**
+  - Implementación en `index.html` del escalado dinámico de Viewport para dispositivos móviles (`screen.width < 600px`: factor de escala `1.15`, ancho virtual `Math.round(screen.width / 1.15)` con `initial-scale=1.15`), logrando que tipografías, botones táctiles, tarjetas y márgenes crezcan de forma exacta y proporcional un 15% más que en la versión previa sin romper la cuadrícula ni generar barras de desplazamiento horizontales.
+- **Corrección definitiva del encogimiento en celulares (causa raíz):**
+  - Se identificó que la regla `.role-cards { display: grid !important; grid-template-columns: repeat(3, 230px) !important; gap: 16px !important; }` forzaba un ancho de 762 px en todo el documento. Se restringió a `@media (min-width: 721px)`.
+  - En pantallas móviles (`max-width: 720px`), `.role-cards` utiliza una sola columna fluida centrada (`width: min(360px, 100%)`), y la pantalla de bienvenida cuenta con `padding-top: 76px` para que el botón de instalación y cambio de tema permanezcan en la esquina superior sin solaparse con el logotipo de la Chispa.
+- **Optimización de espacio en tarjetas métricas (`Metric`):**
+  - Se rediseñó el componente `Metric` en `src/App.tsx` y `src/index.css` incorporando el contenedor `.metric-card-top`.
+  - El icono y la cifra numérica ahora se ubican juntos en la fila superior (icono a la izquierda y número en negrita a la derecha), reduciendo la altura vertical de cada tarjeta de 123 px a 80 px (un ahorro de más de 40 px de altura). Esto permite que el contenido inferior ("Actividad reciente" y "Sugerencia de hoy") gane protagonismo inmediato en pantallas móviles sin requerir desplazamiento.
+- **Depuración de textos superfluos e instrucciones innecesarias:**
+  - En la entrada de estudiantes (`StudentView`): se eliminó el texto redundante *"No necesitas crear una cuenta."* y se simplificó la indicación inferior a *"La evaluación comenzará cuando tu docente dé inicio a la sala."*
+  - En el acceso de usuarios (`AuthScreen`): se eliminaron referencias informales a *"acceso piloto"* y jerga técnica (*"Nunca se usa la clave service_role"*), simplificando a *"Cuenta de {roleLabel}. Ingresa tus credenciales para continuar."*
+  - En la administración de usuarios (`AdminUsersView`): se unificó la terminología sustituyendo *"Acceso piloto"* por *"Contraseña directa"*.
+  - En `AuthScreen` y `ProfileSetupScreen`: se reemplazó la letra *"E"* antigua por el imagotipo oficial de la Chispa Curiosa (`<IconSparkMascot />`).
+- **Actualización de caché y PWA:**
+  - Se incrementó la versión del Service Worker a `edueval-shell-v7` en `public/sw.js` y se actualizaron los parámetros `?v=7` en `index.html`.
+- **Verificación:**
+  - `npm run test` completó **89/89 pruebas aprobadas**.
+  - `npm run build` compiló satisfactoriamente sin errores.

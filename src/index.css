@@ -1413,10 +1413,12 @@ button{cursor:pointer;border:0;color:inherit}
   border-left: 3px solid var(--accent-warm) !important;
 }
 
-.role-cards{
-  display: grid !important;
-  grid-template-columns: repeat(3, 230px) !important;
-  gap: 16px !important;
+@media (min-width: 721px){
+  .role-cards{
+    display: grid !important;
+    grid-template-columns: repeat(3, 230px) !important;
+    gap: 16px !important;
+  }
 }
 
 .role-card{
@@ -1488,14 +1490,59 @@ button{cursor:pointer;border:0;color:inherit}
 }
 
 .metric-card{
-  border-radius: 22px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 16px 18px !important;
+  border-radius: 20px !important;
   box-shadow: var(--shadow-card) !important;
   border: 1px solid var(--line) !important;
+  min-height: 104px !important;
 }
 
-.metric-card strong{
+.metric-card-top{
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  margin-bottom: 8px !important;
+}
+
+.metric-card-top .metric-icon{
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 11px !important;
+  display: grid !important;
+  place-items: center !important;
+  font-size: 17px !important;
+  margin: 0 !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+}
+
+[data-theme="dark"] .metric-card-top .metric-icon{
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.metric-card-top strong{
+  font-family: 'Plus Jakarta Sans', sans-serif !important;
+  font-size: 30px !important;
   font-weight: 800 !important;
-  letter-spacing: -0.03em !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+}
+
+.metric-card b{
+  font-size: 13px !important;
+  line-height: 1.3 !important;
+  font-weight: 700 !important;
+  display: block !important;
+}
+
+.metric-card small{
+  font-size: 11px !important;
+  line-height: 1.3 !important;
+  color: var(--muted) !important;
+  margin-top: 3px !important;
+  display: block !important;
 }
 
 .activity-type span{
@@ -1890,20 +1937,36 @@ html, body {
   .page-intro > div > p:last-child {
     font-size: 13px !important;
   }
-  .metric-card {
-    padding: 16px 14px !important;
-    border-radius: 16px !important;
-    min-height: 96px !important;
+  /* Tarjetas métricas compactas con icono y número en la parte superior */
+  .metric-grid {
+    gap: 8px !important;
+    margin-bottom: 20px !important;
   }
-  .metric-card strong {
-    font-size: 27px !important;
+  .metric-card {
+    padding: 10px 10px 12px !important;
+    border-radius: 14px !important;
+    min-height: 80px !important;
+  }
+  .metric-card-top {
+    margin-bottom: 6px !important;
+  }
+  .metric-card-top .metric-icon {
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+  }
+  .metric-card-top strong {
+    font-size: 26px !important;
   }
   .metric-card b {
-    font-size: 12px !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
   }
   .metric-card small {
-    font-size: 11px !important;
-    line-height: 1.3 !important;
+    font-size: 9.5px !important;
+    line-height: 1.2 !important;
+    margin-top: 2px !important;
   }
   .activity-card {
     padding: 18px !important;
@@ -1948,4 +2011,13 @@ html, body {
     font-size: 16px !important;
     min-height: 44px !important;
   }
+}
+
+/* Móvil: sin desbordes horizontales y tarjetas de rol en una columna */
+html,body{max-width:100%;overflow-x:hidden}
+@media (max-width:720px){
+  .role-landing{padding-top:76px!important;padding-left:16px!important;padding-right:16px!important}
+  .landing-top-actions{top:14px!important;right:14px!important}
+  .role-cards{display:grid!important;grid-template-columns:1fr!important;width:min(360px,100%);max-width:100%;gap:12px!important}
+  .role-card{width:100%}
 }
