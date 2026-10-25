@@ -1,4 +1,4 @@
-const VERSION = 'edueval-shell-v7'
+const VERSION = 'edueval-shell-v8'
 
 self.addEventListener('install', (event) => {
   self.skipWaiting()

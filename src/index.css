@@ -1932,10 +1932,12 @@ html, body {
     padding: 20px 14px 60px !important;
   }
   .page-intro h1 {
-    font-size: 28px !important;
+    font-size: 32px !important;
+    line-height: 1.15 !important;
   }
   .page-intro > div > p:last-child {
-    font-size: 13px !important;
+    font-size: 14px !important;
+    line-height: 1.5 !important;
   }
   /* Tarjetas métricas compactas con icono y número en la parte superior */
   .metric-grid {
@@ -1957,14 +1959,14 @@ html, body {
     font-size: 14px !important;
   }
   .metric-card-top strong {
-    font-size: 26px !important;
+    font-size: 28px !important;
   }
   .metric-card b {
-    font-size: 11px !important;
+    font-size: 12px !important;
     line-height: 1.25 !important;
   }
   .metric-card small {
-    font-size: 9.5px !important;
+    font-size: 10px !important;
     line-height: 1.2 !important;
     margin-top: 2px !important;
   }
