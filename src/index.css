@@ -1694,3 +1694,258 @@ button{cursor:pointer;border:0;color:inherit}
 .role-cards.staggered-in .role-card:nth-child(3) {
   animation: splashFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
 }
+
+/* ==========================================================================
+   Adaptación Móvil Fluida y Escalado Ergonómico (100% Pantalla Móvil)
+   ========================================================================== */
+html, body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.app-shell, .layout, .main-content {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+@media (max-width: 768px) {
+  /* Tipografía base y jerarquía legible en teléfonos */
+  body {
+    font-size: 15px;
+  }
+  
+  .eyebrow {
+    font-size: 11px !important;
+    letter-spacing: 0.14em !important;
+  }
+  
+  /* Botones principales con altura táctil ergonómica (mínimo 46-48px) */
+  .primary-button, .outline-button {
+    font-size: 14px !important;
+    min-height: 48px !important;
+    padding: 12px 20px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 12px !important;
+  }
+
+  /* Tarjetas de Rol (RoleLanding) amplias y cómodas */
+  .role-landing {
+    padding: 24px 16px 40px !important;
+    min-height: 100dvh !important;
+    justify-content: center !important;
+  }
+  .landing-copy {
+    max-width: 100% !important;
+    padding: 0 4px !important;
+  }
+  .landing-copy h1 {
+    font-size: clamp(28px, 7.5vw, 36px) !important;
+    line-height: 1.15 !important;
+    margin: 0 0 10px !important;
+  }
+  .landing-copy > p:last-child {
+    font-size: 14px !important;
+    line-height: 1.55 !important;
+    margin-bottom: 24px !important;
+    color: var(--muted) !important;
+  }
+  .role-cards {
+    width: 100% !important;
+    max-width: 440px !important;
+    gap: 12px !important;
+  }
+  .role-card {
+    width: 100% !important;
+    min-height: 100px !important;
+    padding: 18px 16px !important;
+    border-radius: 18px !important;
+    grid-template-columns: 48px 1fr 24px !important;
+    gap: 14px !important;
+  }
+  .role-card-icon {
+    width: 48px !important;
+    height: 48px !important;
+    border-radius: 14px !important;
+    font-size: 24px !important;
+  }
+  .role-card-copy b {
+    font-size: 19px !important;
+    letter-spacing: -0.01em !important;
+  }
+  .role-card-copy small {
+    font-size: 13px !important;
+    line-height: 1.45 !important;
+    margin-top: 5px !important;
+    color: var(--muted) !important;
+  }
+  .role-card-arrow {
+    font-size: 22px !important;
+  }
+
+  /* Pantalla de Entrada de Estudiante */
+  .student-entry {
+    margin: 3vh auto 6vh !important;
+    padding: 0 12px !important;
+    max-width: 440px !important;
+  }
+  .student-orb {
+    width: 72px !important;
+    height: 72px !important;
+    font-size: 34px !important;
+    margin-bottom: 16px !important;
+  }
+  .student-entry h1 {
+    font-size: 32px !important;
+    margin-bottom: 8px !important;
+  }
+  .student-entry > p:not(.eyebrow) {
+    font-size: 15px !important;
+    line-height: 1.55 !important;
+    margin-bottom: 22px !important;
+  }
+  .entry-card {
+    padding: 22px 18px !important;
+    border-radius: 18px !important;
+  }
+  .entry-card label {
+    font-size: 13px !important;
+    margin-bottom: 14px !important;
+  }
+  .entry-card input {
+    font-size: 16px !important;
+    padding: 12px 14px !important;
+    min-height: 48px !important;
+    border-radius: 10px !important;
+  }
+  .entry-card .primary-button {
+    min-height: 50px !important;
+    font-size: 15px !important;
+    margin-top: 10px !important;
+  }
+  .entry-card > small {
+    font-size: 12px !important;
+    margin-top: 14px !important;
+  }
+
+  /* Pantalla de Evaluación Estudiante (PlayView) */
+  .play-wrap {
+    padding: 0 4px !important;
+    max-width: 100% !important;
+  }
+  .play-top {
+    font-size: 11px !important;
+    margin-bottom: 14px !important;
+  }
+  .play-card {
+    padding: 22px 16px !important;
+    border-radius: 18px !important;
+  }
+  .play-card h1 {
+    font-size: 24px !important;
+    line-height: 1.25 !important;
+  }
+  .play-prompt {
+    font-size: 16px !important;
+    line-height: 1.6 !important;
+    margin-bottom: 22px !important;
+  }
+  .answer-option {
+    padding: 15px 16px !important;
+    min-height: 52px !important;
+    font-size: 15px !important;
+    border-radius: 12px !important;
+    gap: 12px !important;
+  }
+  .option-mark {
+    width: 24px !important;
+    height: 24px !important;
+    font-size: 13px !important;
+  }
+  .feedback-box {
+    padding: 16px !important;
+    border-radius: 12px !important;
+    font-size: 13px !important;
+  }
+  .feedback-box b {
+    font-size: 14px !important;
+  }
+  .feedback-box p {
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* Paneles de Docente y Administración */
+  .main-content {
+    padding: 20px 14px 60px !important;
+  }
+  .page-intro h1 {
+    font-size: 28px !important;
+  }
+  .page-intro > div > p:last-child {
+    font-size: 13px !important;
+  }
+  .metric-card {
+    padding: 16px 14px !important;
+    border-radius: 16px !important;
+    min-height: 96px !important;
+  }
+  .metric-card strong {
+    font-size: 27px !important;
+  }
+  .metric-card b {
+    font-size: 12px !important;
+  }
+  .metric-card small {
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+  }
+  .activity-card {
+    padding: 18px !important;
+    border-radius: 16px !important;
+  }
+  .activity-card h3 {
+    font-size: 16px !important;
+  }
+  .activity-card > p {
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+  .card-footer {
+    font-size: 11px !important;
+  }
+  .room-card {
+    padding: 18px !important;
+    border-radius: 16px !important;
+  }
+  .room-card-head h2 {
+    font-size: 20px !important;
+  }
+  .room-code b {
+    font-size: 24px !important;
+  }
+  .results-summary div strong {
+    font-size: 24px !important;
+  }
+  .results-summary div span {
+    font-size: 11px !important;
+  }
+
+  /* Evitar desbordes de modales en pantallas pequeñas */
+  .modal-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 20px 16px !important;
+    border-radius: 18px !important;
+    max-height: calc(100dvh - 32px) !important;
+  }
+  .modal-card input, .modal-card textarea, .modal-card select {
+    font-size: 16px !important;
+    min-height: 44px !important;
+  }
+}

@@ -678,6 +678,21 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
     * Transición fluida (*morphing*) que eleva el icono hacia el encabezado de marca tras 1.5s o al tocar la pantalla.
     * Aparición escalonada (*staggered fade-in*) de las tarjetas de perfil (Docente, Estudiante, Administrador).
     * Control de sesión (`edueval-splash-seen`) para no interrumpir al usuario en navegación repetida, con opción de revivir la animación tocando el logo de marca.
+- **Corrección integral del Icono PWA (Mascota Chispa) e invalidación de caché móvil:**
+  - Se identificó la causa de que los celulares mostraran el icono antiguo: Android Chrome no acepta formato SVG para los accesos directos de pantalla de inicio y requiere iconos PNG específicos (`192x192` y `512x512`), además de que el Service Worker local mantenía en caché la versión antigua `edueval-shell-v4`.
+  - Se generaron los archivos PNG oficiales de alta resolución: `public/icon-192.png`, `public/icon-512.png`, `public/icon-maskable-512.png` y `public/apple-touch-icon.png`.
+  - Se actualizó `public/manifest.webmanifest` incorporando los iconos PNG y SVG con sus resoluciones exactas.
+  - Se actualizó `public/sw.js` elevando la versión a `edueval-shell-v6`, implementando eliminación inmediata de cachés anteriores (`caches.delete`) en el evento `activate`, activación inmediata (`skipWaiting()`, `clients.claim()`) y estrategia de red prioritaria para recursos de identidad (iconos y manifiesto).
+  - En `index.html` se agregaron parámetros de versión (`?v=6`) para forzar la recarga inmediata del favicon y el icono en navegadores móviles.
+- **Resolución definitiva de escala móvil y erradicación de interfaz diminuta / congelada:**
+  - Se diagnosticó por qué la app se percibía "muy pequeña y congelada":
+    * La directiva previa `user-scalable=no, maximum-scale=1.0` impedía ampliar la pantalla cuando los elementos antiguos tenían tamaños de 9px a 11px.
+    * La ausencia de contención de desbordamiento horizontal (`overflow-x: hidden`) provocaba que en ciertos anchos el navegador redujera la escala global para ajustar elementos anchos.
+  - Se reconfiguró el viewport a escala natural `width=device-width, initial-scale=1.0, viewport-fit=cover`.
+  - Se implementó un sistema de diseño responsive móvil ergonómico en `src/index.css`:
+    * Contención horizontal estricta con `width: 100%; max-width: 100vw; overflow-x: hidden;` en `html`, `body` y contenedores principales.
+    * Elevación de tipografía base en móviles: textos de cuerpo a 15px/16px, entradas de formulario a 16px (evitando zoom forzado del sistema), y etiquetas secundarias a 12px/13px legibles (eliminando textos diminutos de 9px).
+    * Altura táctil ergonómica mínima de 48px a 52px en botones, tarjetas de rol (`RoleCard`), opciones de respuesta (`answer-option`) y campos de entrada para interacción cómoda con el pulgar.
 - **Pendientes inmediatos:**
   - **Fase 4: Importación JSON y generador estructurado:** Actualizar `src/lib/contentImport.ts` y `buildActivitiesFromTemplate` en `src/App.tsx` para que las propuestas nazcan con el objeto `details` v1.2 de las 6 actividades y validación pedagógica estricta de compatibilidad.
 - Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 suites intactas) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores.
