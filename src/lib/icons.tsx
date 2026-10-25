@@ -189,3 +189,47 @@ export function IconScenario({ size = 20, className = '', ...props }: IconProps)
     </svg>
   )
 }
+
+export function IconSparkMascot({ size = 32, className = '', ...props }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" className={className} {...props}>
+      <defs>
+        <linearGradient id="icoSparkGrad" x1="20%" y1="10%" x2="70%" y2="90%">
+          <stop offset="0%" stopColor="#ffe699" />
+          <stop offset="30%" stopColor="#f8a452" />
+          <stop offset="70%" stopColor="#ff7a29" />
+          <stop offset="100%" stopColor="#e64a19" />
+        </linearGradient>
+        <linearGradient id="icoBellyGrad" x1="50%" y1="0%" x2="50%" y2="100%">
+          <stop offset="0%" stopColor="#fff4d1" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="#fed686" stopOpacity="0.25" />
+        </linearGradient>
+      </defs>
+      {/* Chispa de destello flotante */}
+      <path d="M74 22 Q75 19 77 19 Q75 19 74 16 Q73 19 71 19 Q73 19 74 22Z" fill="#ffe29a" />
+      <circle cx="76" cy="38" r="1.5" fill="#ffd17a" />
+      {/* Cuerpo de la llama */}
+      <path
+        d="M50 84 C34 84 24 70 27 54 C29 43 36 36 45 28 C49 24 54 17 59 15 C60.5 14.5 62 16 61 18.5 C57.5 27 61 33 68 43 C76 55 75 70 68 78 C63 83.5 56.5 84 50 84 Z"
+        fill="url(#icoSparkGrad)"
+      />
+      {/* Vientre suave */}
+      <path
+        d="M50 80 C39 80 32 70 34 58 C35 50 41 44 47 38 C50 35 53 30 56 28 C54.5 34 57 38 62 45 C67 54 67 65 62 73 C58 78 54 80 50 80 Z"
+        fill="url(#icoBellyGrad)"
+      />
+      {/* Mejillas */}
+      <ellipse cx="37" cy="59" rx="3.5" ry="2" fill="#e64a19" opacity="0.35" />
+      <ellipse cx="63" cy="59" rx="3.5" ry="2" fill="#e64a19" opacity="0.35" />
+      {/* Ojos curiosos */}
+      <ellipse cx="41" cy="53" rx="3.8" ry="4.8" fill="#12251f" />
+      <circle cx="40" cy="51.5" r="1.5" fill="#ffffff" />
+      <circle cx="42.5" cy="54.5" r="0.7" fill="#ffffff" />
+      <ellipse cx="59" cy="53" rx="3.8" ry="4.8" fill="#12251f" />
+      <circle cx="58" cy="51.5" r="1.5" fill="#ffffff" />
+      <circle cx="60.5" cy="54.5" r="0.7" fill="#ffffff" />
+      {/* Sonrisa */}
+      <path d="M46 60 Q50 64 54 60" stroke="#12251f" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+    </svg>
+  )
+}

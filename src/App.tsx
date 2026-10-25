@@ -23,7 +23,7 @@ import {
   IconSun, IconMoon, IconHome, IconContent, IconProposals, IconRooms,
   IconResults, IconUsers, IconAudit, IconTeacher, IconStudent, IconAdmin,
   IconArrowRight, IconHelp, IconTrueFalse, IconSingleChoice, IconMatching,
-  IconSorting, IconOrdering, IconScenario
+  IconSorting, IconOrdering, IconScenario, IconSparkMascot
 } from './lib/icons'
 
 type Role = 'admin' | 'teacher' | 'student'
@@ -1288,7 +1288,7 @@ function App() {
     />
   ) : <div className="app-shell">
     <header className="topbar">
-      <button className="brand" onClick={() => show('overview')} aria-label="Ir al inicio"><span className="brand-mark">E</span><span><strong>EvaluEdu</strong><small>aprendizaje activo</small></span></button>
+      <button className="brand" onClick={() => show('overview')} aria-label="Ir al inicio"><span className="brand-mark mascot-mark"><IconSparkMascot size={22} /></span><span><strong>EvaluEdu</strong><small>aprendizaje activo</small></span></button>
        <div className="topbar-actions"><span className={`connection-pill ${backendReady ? 'ready' : ''} ${!isOnline ? 'offline' : ''} ${syncQueue.length ? 'pending' : ''}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{syncLabel}</span>{syncQueue.length > 0 && isOnline && <button className="sync-button" type="button" onClick={() => void flushSyncQueue()} disabled={syncing}>{syncing ? '↻' : '↻ Sincronizar'}</button>}{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
     </header>
     {role !== 'student' && mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavOpen(false)} />}
@@ -1316,8 +1316,60 @@ function RoleLanding({
   canInstall?: boolean
   onInstall?: () => void
 }) {
+  const [splashState, setSplashState] = useState<'splash' | 'morphing' | 'ready'>(() => {
+    return readSessionStorage('edueval-splash-seen') ? 'ready' : 'splash'
+  })
+
+  useEffect(() => {
+    if (splashState === 'splash') {
+      const timer = window.setTimeout(() => {
+        setSplashState('morphing')
+      }, 1500)
+      return () => window.clearTimeout(timer)
+    }
+    if (splashState === 'morphing') {
+      const timer = window.setTimeout(() => {
+        setSplashState('ready')
+        try { sessionStorage.setItem('edueval-splash-seen', 'true') } catch {}
+      }, 650)
+      return () => window.clearTimeout(timer)
+    }
+  }, [splashState])
+
+  const skipSplash = () => {
+    if (splashState === 'splash') {
+      setSplashState('morphing')
+    } else if (splashState === 'morphing') {
+      setSplashState('ready')
+      try { sessionStorage.setItem('edueval-splash-seen', 'true') } catch {}
+    }
+  }
+
   return (
     <div className="role-landing">
+      {splashState !== 'ready' && (
+        <div
+          className={`splash-overlay ${splashState === 'morphing' ? 'morphing' : ''}`}
+          onClick={skipSplash}
+          role="button"
+          tabIndex={0}
+          aria-label="Pantalla de bienvenida, pulsa para continuar"
+        >
+          <div className="splash-mascot-box">
+            <div className="splash-halo" />
+            <div className="splash-mascot-graphic">
+              <IconSparkMascot size={116} />
+            </div>
+          </div>
+          <div className="splash-title-wrap">
+            <p className="eyebrow">BIENVENIDA</p>
+            <h1>EvaluEdu</h1>
+            <p>Evaluación activa y formativa para transformar cada clase.</p>
+            <span className="splash-hint-pill">✨ Toca para continuar</span>
+          </div>
+        </div>
+      )}
+
       <div className="landing-top-actions">
         {canInstall && onInstall && (
           <button className="install-button" type="button" onClick={onInstall}>
@@ -1335,15 +1387,22 @@ function RoleLanding({
         </button>
       </div>
       <div className="landing-brand">
-        <span className="brand-mark">E</span>
-        <div><strong>EvaluEdu</strong><small>aprendizaje activo</small></div>
+        <button
+          type="button"
+          className="landing-brand-replay"
+          onClick={() => setSplashState('splash')}
+          title="Ver bienvenida animada"
+        >
+          <span className="brand-mark mascot-mark"><IconSparkMascot size={26} /></span>
+          <div><strong>EvaluEdu</strong><small>aprendizaje activo</small></div>
+        </button>
       </div>
       <div className="landing-copy">
         <p className="eyebrow">EVALUACIÓN EDUCATIVA</p>
         <h1>¿Cómo quieres entrar?</h1>
         <p>Elige tu espacio para continuar. Cada rol tiene una experiencia diseñada para sus necesidades.</p>
       </div>
-      <div className="role-cards">
+      <div className={`role-cards ${splashState === 'ready' ? 'staggered-in' : ''}`}>
         <RoleCard icon={<IconTeacher size={26} />} title="Docente" description="Crea contenido, prepara actividades y acompaña a tu grupo." onClick={() => onChoose('teacher')} tone="teacher" />
         <RoleCard icon={<IconStudent size={26} />} title="Estudiante" description="Ingresa a una sala con el código de tu docente." onClick={() => onChoose('student')} tone="student" />
         <RoleCard icon={<IconAdmin size={26} />} title="Administrador" description="Gestiona docentes, permisos y configuración general." onClick={() => onChoose('admin')} tone="admin" />

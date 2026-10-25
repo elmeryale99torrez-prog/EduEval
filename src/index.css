@@ -1524,3 +1524,173 @@ button{cursor:pointer;border:0;color:inherit}
     transition:transform .08s ease!important;
   }
 }
+
+/* ==========================================================================
+   Splash Screen Transition & Mascota Chispa (Inspirado en 60fps.design)
+   ========================================================================== */
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 24px;
+  background: radial-gradient(circle at 50% 36%, #fff6ea 0%, #fee8d0 45%, #fcdcb8 100%);
+  transition: opacity 0.65s cubic-bezier(0.16, 1, 0.3, 1), transform 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  user-select: none;
+}
+[data-theme="dark"] .splash-overlay {
+  background: radial-gradient(circle at 50% 36%, #17362c 0%, #0d2019 45%, #08120e 100%);
+}
+.splash-overlay.morphing {
+  opacity: 0;
+  transform: scale(0.95) translateY(-24px);
+  pointer-events: none;
+}
+.splash-mascot-box {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-bottom: 24px;
+}
+.splash-halo {
+  position: absolute;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(248, 164, 82, 0.42) 0%, rgba(248, 164, 82, 0.1) 60%, transparent 80%);
+  animation: splashHaloPulse 2.4s ease-in-out infinite;
+}
+[data-theme="dark"] .splash-halo {
+  background: radial-gradient(circle, rgba(248, 164, 82, 0.28) 0%, rgba(16, 185, 129, 0.08) 60%, transparent 80%);
+}
+.splash-mascot-graphic {
+  position: relative;
+  animation: splashMascotFloat 2.6s ease-in-out infinite;
+  filter: drop-shadow(0 14px 28px rgba(22, 92, 77, 0.22));
+}
+[data-theme="dark"] .splash-mascot-graphic {
+  filter: drop-shadow(0 16px 32px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 24px rgba(248, 164, 82, 0.35));
+}
+.splash-title-wrap {
+  text-align: center;
+  max-width: 380px;
+  animation: splashFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.splash-title-wrap h1 {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 34px;
+  margin: 0 0 6px;
+  color: #14352f;
+  letter-spacing: -0.02em;
+}
+[data-theme="dark"] .splash-title-wrap h1 {
+  color: #f1f5f9;
+}
+.splash-title-wrap p {
+  font-size: 14px;
+  color: #637b72;
+  margin: 0 0 28px;
+  line-height: 1.5;
+}
+[data-theme="dark"] .splash-title-wrap p {
+  color: #94a3b8;
+}
+.splash-hint-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(248, 164, 82, 0.35);
+  box-shadow: 0 4px 14px rgba(248, 164, 82, 0.15);
+  font-size: 11px;
+  font-weight: 700;
+  color: #8c572b;
+  animation: splashPillPulse 1.8s ease-in-out infinite;
+}
+[data-theme="dark"] .splash-hint-pill {
+  background: rgba(18, 22, 26, 0.85);
+  border-color: rgba(248, 164, 82, 0.28);
+  color: #f8a452;
+}
+
+@keyframes splashMascotFloat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-8px) scale(1.02); }
+}
+@keyframes splashHaloPulse {
+  0%, 100% { transform: scale(0.92); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 0.95; }
+}
+@keyframes splashFadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes splashPillPulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+
+/* Marca con Mascota en Header y Landing */
+.brand-mark.mascot-mark {
+  background: linear-gradient(135deg, #175446 0%, #0c2d25 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 4px 12px rgba(18, 56, 46, 0.16) !important;
+  padding: 2px !important;
+  display: grid !important;
+  place-items: center !important;
+}
+[data-theme="dark"] .brand-mark.mascot-mark {
+  background: linear-gradient(135deg, #16362d 0%, #0c1c17 100%) !important;
+  border-color: rgba(248, 164, 82, 0.3) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
+}
+.landing-brand-replay {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease;
+  margin-bottom: 44px;
+}
+.landing-brand-replay:hover {
+  transform: translateY(-2px);
+  background: rgba(22, 92, 77, 0.05);
+}
+[data-theme="dark"] .landing-brand-replay:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.landing-brand-replay strong {
+  display: block;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 25px;
+  line-height: 19px;
+  color: var(--ink-heading);
+}
+.landing-brand-replay small {
+  color: #91a39a;
+  font-size: 10px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+/* Animación escalonada de tarjetas de rol */
+.role-cards.staggered-in .role-card:nth-child(1) {
+  animation: splashFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+.role-cards.staggered-in .role-card:nth-child(2) {
+  animation: splashFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+.role-cards.staggered-in .role-card:nth-child(3) {
+  animation: splashFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
+}

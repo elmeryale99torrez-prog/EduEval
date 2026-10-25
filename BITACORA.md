@@ -668,6 +668,16 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
   - Se sustituyeron las rutas absolutas `/manifest.webmanifest` y `/icon.svg` por rutas relativas `./manifest.webmanifest` y `./icon.svg` en `index.html`, permitiendo que el navegador en Android e iOS descargue correctamente el manifiesto e iconos dentro de la subruta `/EduEval/` para mostrar el botón de "Instalar / Descargar aplicación".
 - **Análisis de referencia visual (Pinterest - 60fps.design):**
   - Se inspeccionó y analizó el contenido del enlace `https://es.pinterest.com/pin/1110770695648844785/`: corresponde al prototipo *"Trendy Splash Screen Transition: Onboarding Mascot Animation"* de *60fps.design*, una transición fluida desde una pantalla de bienvenida naranja hacia una cabecera con mascota e ingreso escalonado de opciones.
+- **Adopción de la nueva Mascota e Icono oficial ("Chispa Curiosa"):**
+  - Con la aprobación del usuario del **Concepto A**, se creó la ilustración vectorial SVG de la Chispa Curiosa (llama ámbar/naranja con ojos expresivos y mejillas sonrosadas sobre fondo esmeralda profundo).
+  - Se actualizaron `public/icon.svg` y `public/icon-maskable.svg` para la PWA e instalación en dispositivos móviles.
+  - Se creó el componente `<IconSparkMascot />` en `src/lib/icons.tsx` y se integró como imagotipo oficial en la cabecera superior y la pantalla de inicio.
+- **Implementación de la Pantalla de Bienvenida y Transición (*Splash Screen Transition*):**
+  - Se integró la secuencia de onboarding interactiva en `RoleLanding` (`src/App.tsx`) y `src/index.css`:
+    * Estado de bienvenida inmersiva con halo cálido pulsante y flotación de la mascota.
+    * Transición fluida (*morphing*) que eleva el icono hacia el encabezado de marca tras 1.5s o al tocar la pantalla.
+    * Aparición escalonada (*staggered fade-in*) de las tarjetas de perfil (Docente, Estudiante, Administrador).
+    * Control de sesión (`edueval-splash-seen`) para no interrumpir al usuario en navegación repetida, con opción de revivir la animación tocando el logo de marca.
 - **Pendientes inmediatos:**
   - **Fase 4: Importación JSON y generador estructurado:** Actualizar `src/lib/contentImport.ts` y `buildActivitiesFromTemplate` en `src/App.tsx` para que las propuestas nazcan con el objeto `details` v1.2 de las 6 actividades y validación pedagógica estricta de compatibilidad.
 - Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 suites intactas) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores.
