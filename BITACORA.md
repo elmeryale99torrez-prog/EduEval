@@ -659,7 +659,15 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
       * Se vinculó el repositorio remoto `https://github.com/elmeryale99torrez-prog/EduEval.git` y se subió el código fuente completo en la rama `main`.
       * Se configuró el flujo de integración continua `.github/workflows/deploy.yml` con GitHub Actions para compilar y desplegar automáticamente en cada push.
       * Se adaptó `vite.config.ts` (`base: './'`), `public/manifest.webmanifest` (`id`, `start_url`, `scope` e iconos con rutas relativas `./`), `src/main.tsx` (`swUrl` relativo con `BASE_URL`) y `public/sw.js` (`self.registration.scope`), resolviendo la limitación de subdirectorio para habilitar la instalación como PWA en Android, iOS y computadora desde la URL pública oficial `https://elmeryale99torrez-prog.github.io/EduEval/`.
-    - **Pendientes para la siguiente sesión:**
-      * **Bloqueo de zoom táctil en móviles (PWA nativa):** Ajustar la etiqueta `viewport` y `touch-action` para impedir el zoom involuntario con los dedos (*pinch-to-zoom*) en celulares, asegurando que la app se mantenga fija, compacta y con sensación de app nativa.
-      * **Fase 4: Importación JSON y generador estructurado:** Actualizar `src/lib/contentImport.ts` y `buildActivitiesFromTemplate` para que las propuestas nazcan con el objeto `details` v1.2 de las 6 actividades y validación pedagógica estricta.
-- Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 suites intactas) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores. Servidor de desarrollo Vite activo con HMR.
+### Etapa 8 · Erradicación de zoom móvil, preparación PWA y transición visual · 2026-10-25
+
+- **Bloqueo de zoom involuntario en móviles (*pinch-to-zoom* / doble toque):**
+  - Se actualizó el `<meta name="viewport">` en `index.html` a `width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover`.
+  - En `src/index.css`, se asignó `touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%;` a `html, body` y `touch-action: manipulation;` a todos los botones, enlaces, tarjetas y campos de entrada. Esto impide que los gestos de pellizco o toques rápidos amplíen o encojan accidentalmente la pantalla, garantizando un comportamiento 100% fijo y compacto de aplicación nativa.
+- **Corrección de enlaces del Manifest e Iconos para instalación PWA en GitHub Pages:**
+  - Se sustituyeron las rutas absolutas `/manifest.webmanifest` y `/icon.svg` por rutas relativas `./manifest.webmanifest` y `./icon.svg` en `index.html`, permitiendo que el navegador en Android e iOS descargue correctamente el manifiesto e iconos dentro de la subruta `/EduEval/` para mostrar el botón de "Instalar / Descargar aplicación".
+- **Análisis de referencia visual (Pinterest - 60fps.design):**
+  - Se inspeccionó y analizó el contenido del enlace `https://es.pinterest.com/pin/1110770695648844785/`: corresponde al prototipo *"Trendy Splash Screen Transition: Onboarding Mascot Animation"* de *60fps.design*, una transición fluida desde una pantalla de bienvenida naranja hacia una cabecera con mascota e ingreso escalonado de opciones.
+- **Pendientes inmediatos:**
+  - **Fase 4: Importación JSON y generador estructurado:** Actualizar `src/lib/contentImport.ts` y `buildActivitiesFromTemplate` en `src/App.tsx` para que las propuestas nazcan con el objeto `details` v1.2 de las 6 actividades y validación pedagógica estricta de compatibilidad.
+- Verificación ejecutada: `npm run test` aprobó **89/89 pruebas** (14 suites intactas) y `npm run build` (`tsc -b && vite build`) compiló con éxito sin errores.
