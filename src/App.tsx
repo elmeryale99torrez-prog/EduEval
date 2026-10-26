@@ -378,6 +378,7 @@ function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null)
   const [preselectedRoomActivityIds, setPreselectedRoomActivityIds] = useState<string[] | null>(null)
+  const [lastStudentAttempt, setLastStudentAttempt] = useState<StudentAttempt | null>(null)
 
   useEffect(() => localStorage.setItem('edueval-activities', JSON.stringify(activities)), [activities])
   useEffect(() => localStorage.setItem('edueval-rooms', JSON.stringify(rooms)), [rooms])
@@ -703,6 +704,23 @@ function App() {
     window.addEventListener('popstate', handleBack)
     return () => window.removeEventListener('popstate', handleBack)
   }, [view, playIndex, studentRoom?.allowBack, selectedActivity, showPasswordChange, authSession, hasChosenRole, mobileNavOpen])
+  useEffect(() => {
+    const updateModalLock = () => {
+      const hasBackdrop = Boolean(document.querySelector('.modal-backdrop')) || mobileNavOpen
+      if (hasBackdrop) {
+        document.body.classList.add('body-modal-locked')
+      } else {
+        document.body.classList.remove('body-modal-locked')
+      }
+    }
+    const observer = new MutationObserver(updateModalLock)
+    observer.observe(document.body, { childList: true, subtree: true })
+    updateModalLock()
+    return () => {
+      observer.disconnect()
+      document.body.classList.remove('body-modal-locked')
+    }
+  }, [mobileNavOpen])
   const clearInviteUrl = () => { window.history.replaceState({}, document.title, window.location.pathname) }
   const cancelInvite = async () => { clearInviteUrl(); setInviteFlow(false); await signOut() }
   const completeInvite = () => { clearInviteUrl(); setInviteFlow(false); setRole('teacher'); setHasChosenRole(true); show('overview'); notify('Acceso docente activado.') }
@@ -1148,10 +1166,16 @@ function App() {
 
   const createRoom = (settings: RoomSettings) => {
     if (settings.activityIds.length < 1) return notify('Selecciona al menos una actividad para crear la sala.')
-    const selected = settings.activityIds.map((id) => published.find((item) => item.id === id)).filter(Boolean) as Activity[]
-    if (new Set(selected.map((item) => item.type)).size > 3) return notify('Una sala puede combinar como máximo tres tipos de actividad.')
-    const activities = Array.from({ length: Math.max(1, settings.questionCount) }, (_, index) => settings.activityIds[index % settings.activityIds.length])
-    const room: Room = { ...settings, id: `r${Date.now()}`, code: `EDU-${Math.floor(100 + Math.random() * 899)}`, activities, status: 'ready', createdAt: new Date().toISOString() }
+    const count = settings.activityIds.length
+    const room: Room = {
+      ...settings,
+      questionCount: count,
+      id: `r${Date.now()}`,
+      code: `EDU-${Math.floor(100 + Math.random() * 899)}`,
+      activities: [...settings.activityIds],
+      status: 'ready',
+      createdAt: new Date().toISOString(),
+    }
     setRooms((current) => [room, ...current])
     void persistCloudRoom(room, room.id)
     notify('Sala lista para iniciar. Ábrela cuando quieras compartir el código.')
@@ -1174,27 +1198,25 @@ function App() {
   }
 
   const deleteRoom = async (room: Room) => {
-    const localAttempts = attempts.filter((attempt) => attempt.roomId === room.id || attempt.roomCode === room.code)
-    if (localAttempts.length) return notify('Esta sala tiene resultados registrados. Archívala para conservar la trazabilidad.')
-    if (!window.confirm(`¿Eliminar la sala “${room.name}”? Esta acción no se puede deshacer.`)) return
+    if (!window.confirm(`¿Deseas eliminar la sala “${room.name}” (${room.code}) y todos sus registros asociados? Esta acción dejará limpia la app y no se puede deshacer.`)) return
     if (isCloudId(room.id)) {
-      if (!supabase || !authProfile) return notify('No pudimos verificar tu sesión para eliminar esta sala.')
-      const [participantsResult, attemptsResult, auditResult] = await Promise.all([
-        supabase.from('room_participants').select('id').eq('room_id', room.id).limit(1),
-        supabase.from('attempts').select('id').eq('room_id', room.id).limit(1),
-        supabase.from('audit_events').select('id').eq('room_id', room.id).limit(1),
-      ])
-      if (participantsResult.error || attemptsResult.error || auditResult.error) return notify('No pudimos comprobar si la sala tiene participantes o resultados.')
-      if (participantsResult.data?.length || attemptsResult.data?.length || auditResult.data?.length) return notify('La sala tiene trazabilidad o participantes. Usa “Archivar sala” para conservar sus datos.')
-      const { error: linksError } = await supabase.from('room_activities').delete().eq('room_id', room.id)
-      if (linksError) return notify(`No se pudieron quitar las actividades vinculadas: ${linksError.message}`)
-      const { error } = await supabase.from('rooms').delete().eq('id', room.id).eq('owner_id', authProfile.id)
-      if (error) return notify(`No se pudo eliminar la sala: ${error.message}`)
-      markSynced()
+      if (supabase && authProfile) {
+        try {
+          await supabase.from('attempts').delete().eq('room_id', room.id)
+          await supabase.from('room_participants').delete().eq('room_id', room.id)
+          await supabase.from('room_activities').delete().eq('room_id', room.id)
+          const { error } = await supabase.from('rooms').delete().eq('id', room.id).eq('owner_id', authProfile.id)
+          if (error) notify(`Aviso en la nube: ${error.message}`)
+          else markSynced()
+        } catch {
+          // continuar con limpieza local
+        }
+      }
     }
     setRooms((current) => current.filter((item) => item.id !== room.id))
+    setAttempts((current) => current.filter((a) => a.roomId !== room.id && a.roomCode !== room.code))
     if (studentRoom?.id === room.id) leaveStudentSession()
-    notify('Sala eliminada.')
+    notify(`Sala “${room.name}” eliminada correctamente.`)
   }
   const shareRoomCode = async (room: Room) => {
     try { await navigator.clipboard?.writeText(room.code); notify(`Código ${room.code} copiado para compartir.`) } catch { notify(`Comparte el código ${room.code} con tu grupo.`) }
@@ -1287,7 +1309,7 @@ function App() {
     const activityIds = studentQuestionIds.length ? studentQuestionIds : studentRoom.activities
     const finishTime = new Date().toISOString()
     const answerRows: AttemptAnswer[] = activityIds.map((activityId, index) => {
-      const activity = published.find((item) => item.id === activityId)
+      const activity = activities.find((item) => item.id === activityId)
       const response = studentResponses[index]
       const evaluated = activity ? evaluateActivityResponse(activity, response, studentRoom.scorePerQuestion) : { response: '', status: 'omitted' as const, correct: null, score: 0 }
       const activityMeta = activity?.type === 'trueFalse'
@@ -1307,6 +1329,7 @@ function App() {
     })
     const record: StudentAttempt = { id: `${studentRoom.id}-${studentName.trim().toLowerCase()}-${Date.now()}`, roomId: studentRoom.id, roomName: studentRoom.name, roomCode: studentRoom.code, studentName: studentName.trim(), startedAt: studentStartedAt || finishTime, finishedAt: finishTime, status: reason, totalQuestions: answerRows.length, answeredCount: answerRows.filter((answer) => answer.status === 'answered').length, omittedCount: answerRows.filter((answer) => answer.status === 'omitted').length, correctCount: answerRows.filter((answer) => answer.correct === true).length, score: answerRows.reduce((total, answer) => total + answer.score, 0), maxScore: answerRows.length * studentRoom.scorePerQuestion, answers: answerRows, events: [...studentEvents, ...(finalEvent ? [finalEvent] : []), { type: reason === 'timeout' ? 'timeout' : 'finished', at: finishTime }] }
     setAttempts((current) => current.some((item) => studentAttemptKey(item.roomId, item.studentName) === key) ? current : [record, ...current])
+    setLastStudentAttempt(record)
     void persistCloudAttempt(record, studentParticipantId)
     setStudentFinished(true)
     setSubmitted(false)
@@ -1400,6 +1423,7 @@ function App() {
     setStudentRoom(null)
     setStudentParticipantId(null)
     setStudentGuestToken(null)
+    setLastStudentAttempt(null)
     sessionStorage.removeItem('edueval-student-participant-id')
     sessionStorage.removeItem('edueval-student-guest-token')
     setStudentFinished(false)
@@ -1423,7 +1447,9 @@ function App() {
     notify(`${attemptsToExport.length} intento${attemptsToExport.length === 1 ? '' : 's'} exportado${attemptsToExport.length === 1 ? '' : 's'} para abrir en Excel.`)
   }
 
-  const studentActivities = studentRoom ? (studentQuestionIds.length ? studentQuestionIds : studentRoom.activities).map((id) => published.find((item) => item.id === id)).filter(Boolean) as Activity[] : published
+  const studentActivities = studentRoom
+    ? (studentQuestionIds.length ? studentQuestionIds : studentRoom.activities).map((id) => activities.find((item) => item.id === id)).filter(Boolean) as Activity[]
+    : activities.filter((item) => item.status === 'published')
   const playActivity = selectedActivity ?? studentActivities[playIndex % Math.max(studentActivities.length, 1)]
   const submitAnswer = (response: ActivityResponse) => { setStudentResponses((current) => ({ ...current, [playIndex]: response })); setStudentAnswerTimes((current) => ({ ...current, [playIndex]: Math.max(0, Math.round((Date.now() - studentQuestionStartedAt) / 1000)) })); setStudentEvents((events) => [...events, { type: 'answer_submitted', at: new Date().toISOString(), detail: studentActivities[playIndex]?.id }]); setSubmitted(true); notify('Respuesta registrada. La retroalimentación aparece sin revelar la solución.') }
   const goToStudentQuestion = (nextIndex: number) => { setPlayIndex(nextIndex); setStudentQuestionStartedAt(Date.now()); setSubmitted(Object.prototype.hasOwnProperty.call(studentResponses, nextIndex)) }
@@ -1460,7 +1486,7 @@ function App() {
     {role !== 'student' && mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavOpen(false)} />}
     <div className="layout">
       {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu · v1.2</small></div></aside>}
-      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
+      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} responsesRecorded={studentResponses} onGoToQuestion={goToStudentQuestion} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
     </div>{toast && <div className="toast" role="status">✓ {toast}</div>}
     {showPasswordChange && authSession && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} onSaved={() => { setShowPasswordChange(false); notify('Contraseña actualizada correctamente.') }} />}
     {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
@@ -2495,14 +2521,91 @@ function JsonImportModal({ onCancel, onImport }: { onCancel: () => void; onImpor
       setCopyStatus('Selecciona y copia el prompt manualmente')
     }
   }
-  return <div className="modal-backdrop"><div className="modal-card json-import-modal"><div className="modal-head"><div><p className="eyebrow">IMPORTACIÓN CONTROLADA</p><h2>Importar contenido JSON</h2><p className="modal-subtitle">EvaluEdu no genera contenido con IA: valida el archivo, lo convierte en una plantilla interna y propone actividades para revisión docente.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="admin-notice"><span>i</span><div><b>Usa el prompt oficial con tu IA externa.</b><p>El prompt está bloqueado en modo solo lectura. EvaluEdu no confía en el prompt: valida siempre el JSON recibido y rechaza cualquier campo o estructura no autorizada.</p></div></div><details className="import-prompt-help"><summary>Ver prompt oficial del docente · solo lectura</summary><textarea className="import-prompt-readonly" value={OFFICIAL_IMPORT_PROMPT} readOnly rows={22} aria-label="Prompt oficial de importación, solo lectura" /><button type="button" className="outline-button" onClick={() => void copyPrompt()}>{copyStatus}</button></details><label>Seleccionar archivo JSON<input type="file" accept="application/json,.json" onChange={readFile} /></label>{fileName && <small className="field-hint">Archivo seleccionado: {fileName}</small>}<label>Pegar JSON<textarea value={raw} onChange={(event) => { setRaw(event.target.value); setResult(null) }} rows={10} placeholder={'{\n  "schema": "edueval.content",\n  "version": 2,\n  "topic": { ... },\n  "activities": [ ... ]\n}'} /></label><div className="modal-actions import-actions"><button type="button" className="outline-button" onClick={() => setResult(parseContentImport(raw))} disabled={!raw.trim()}>Validar JSON</button></div>{result && !result.ok && <div className="form-error import-errors"><b>No se puede importar todavía.</b><ul>{result.issues.map((issue, index) => <li key={`${issue.path}-${index}`}><code>{issue.path}</code> · {issue.message}</li>)}</ul></div>}{validResult && <section className="import-validation"><div className="admin-notice success"><span>✓</span><div><b>JSON válido · esquema v{schemaVersion}</b><p>{titleText} · {compatibleEntries.length} formato{compatibleEntries.length === 1 ? '' : 's'} compatible{compatibleEntries.length === 1 ? '' : 's'} detectado{compatibleEntries.length === 1 ? '' : 's'}.</p></div></div><div className="compatibility-grid">{Object.entries(validResult.compatibility).map(([key, item]) => <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}><span>{item.available ? '✓' : '×'}</span><b>{types[key as ActivityType].label}</b><small>{item.available ? 'Se propondrá para revisión' : item.reason}</small></div>)}</div>{!compatibleEntries.length && <div className="form-error">El esquema es válido, pero falta información para detectar una actividad compatible. Completa conceptos, situaciones, pasos o categorías y vuelve a validar.</div>}</section>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="primary-button" disabled={!validResult || !compatibleEntries.length} onClick={() => {
-    if (!validResult) return
-    if (validResult.version === 2) {
-      onImport({ version: 2, topic: validResult.topic, validActivities: validResult.validActivities, activitiesNeedingRepair: validResult.activitiesNeedingRepair })
-    } else {
-      onImport(validResult.document)
-    }
-  }}>Aceptar e ir a propuestas →</button></div></div></div>
+  return <div className="modal-backdrop"><div className="modal-card json-import-modal"><div className="modal-head"><div><p className="eyebrow">IMPORTACIÓN CONTROLADA</p><h2>Importar contenido JSON</h2><p className="modal-subtitle">EvaluEdu no genera contenido con IA: valida el archivo, lo convierte en una plantilla interna y propone actividades para revisión docente.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="admin-notice"><span>i</span><div><b>Usa el prompt oficial con tu IA externa.</b><p>El prompt está bloqueado en modo solo lectura. EvaluEdu no confía en el prompt: valida siempre el JSON recibido y rechaza cualquier campo o estructura no autorizada.</p></div></div><details className="import-prompt-help"><summary>Ver prompt oficial del docente · solo lectura</summary><textarea className="import-prompt-readonly" value={OFFICIAL_IMPORT_PROMPT} readOnly rows={22} aria-label="Prompt oficial de importación, solo lectura" /><button type="button" className="outline-button" onClick={() => void copyPrompt()}>{copyStatus}</button></details><label>Seleccionar archivo JSON<input type="file" accept="application/json,.json" onChange={readFile} /></label>{fileName && <small className="field-hint">Archivo seleccionado: {fileName}</small>}<label>Pegar JSON<textarea value={raw} onChange={(event) => { setRaw(event.target.value); setResult(null) }} rows={10} placeholder={'{\n  "schema": "edueval.content",\n  "version": 2,\n  "topic": { ... },\n  "activities": [ ... ]\n}'} /></label>      <div className="import-action-bar">
+        <button
+          type="button"
+          className="outline-button validate-button"
+          onClick={() => setResult(parseContentImport(raw))}
+          disabled={!raw.trim()}
+        >
+          🔍 Validar estructura JSON
+        </button>
+        {raw.trim() && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => { setRaw(''); setFileName(''); setResult(null) }}
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+      {result && !result.ok && (
+        <div className="form-error import-errors">
+          <b>No se puede importar todavía.</b>
+          <ul>
+            {result.issues.map((issue, index) => (
+              <li key={`${issue.path}-${index}`}>
+                <code>{issue.path}</code> · {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {validResult && (
+        <section className="import-validation">
+          <div className="admin-notice success">
+            <span>✓</span>
+            <div>
+              <b>JSON válido · esquema v{schemaVersion}</b>
+              <p>
+                {titleText} · {compatibleEntries.length} formato{compatibleEntries.length === 1 ? '' : 's'} compatible
+                {compatibleEntries.length === 1 ? '' : 's'} detectado{compatibleEntries.length === 1 ? '' : 's'}.
+              </p>
+            </div>
+          </div>
+          <div className="compatibility-grid">
+            {Object.entries(validResult.compatibility).map(([key, item]) => (
+              <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}>
+                <span>{item.available ? '✓' : '×'}</span>
+                <b>{types[key as ActivityType].label}</b>
+                <small>{item.available ? 'Se propondrá para revisión' : item.reason}</small>
+              </div>
+            ))}
+          </div>
+          {!compatibleEntries.length && (
+            <div className="form-error">
+              El esquema es válido, pero falta información para detectar una actividad compatible. Completa conceptos,
+              situaciones, pasos o categorías y vuelve a validar.
+            </div>
+          )}
+        </section>
+      )}
+      <div className="modal-actions import-bottom-actions">
+        <button type="button" className="outline-button" onClick={onCancel}>
+          Cancelar
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={!validResult || !compatibleEntries.length}
+          onClick={() => {
+            if (!validResult) return
+            if (validResult.version === 2) {
+              onImport({
+                version: 2,
+                topic: validResult.topic,
+                validActivities: validResult.validActivities,
+                activitiesNeedingRepair: validResult.activitiesNeedingRepair,
+              })
+            } else {
+              onImport(validResult.document)
+            }
+          }}
+        >
+          Aceptar e ir a propuestas →
+        </button>
+      </div></div></div>
 }
 
 function compatibility(template: EvaluationTemplate): Record<ActivityType, { available: boolean; reason: string }> {
@@ -4367,6 +4470,168 @@ function RoomContentPicker({
   )
 }
 
+function BlankExamModal({ room, activities, onClose }: { room: Room; activities: Activity[]; onClose: () => void }) {
+  const roomActs = room.activities.map((id) => activities.find((a) => a.id === id)).filter(Boolean) as Activity[]
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card blank-exam-modal printable-template">
+        <div className="modal-head no-print">
+          <div>
+            <p className="eyebrow">RESPALDO IMPRESO / CONTINGENCIA</p>
+            <h2>Examen en blanco para el aula</h2>
+            <p className="modal-subtitle">Hoja de evaluación lista para fotocopiar o responder en papel si no hay internet.</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Cerrar">×</button>
+        </div>
+
+        <div className="exam-print-body">
+          <div className="exam-print-header">
+            <div className="exam-print-institution">
+              <strong>EvaluEdu</strong>
+              <small>Evaluación de aprendizaje activo</small>
+            </div>
+            <div className="exam-print-title">
+              <h2>{room.name}</h2>
+              <p>Código: <b>{room.code}</b> · Total preguntas: <b>{roomActs.length}</b> · Valor por pregunta: <b>{room.scorePerQuestion} pts</b> ({roomActs.length * room.scorePerQuestion} pts totales)</p>
+            </div>
+            <div className="exam-student-fields">
+              <div className="exam-field-line">
+                <span>Estudiante:</span>
+                <span className="exam-line" />
+              </div>
+              <div className="exam-field-line">
+                <span>Fecha:</span>
+                <span className="exam-line" style={{ maxWidth: '160px' }} />
+                <span>Puntaje:</span>
+                <span className="exam-line" style={{ maxWidth: '120px' }} />
+              </div>
+            </div>
+            {room.instructions && (
+              <div className="exam-instructions-box">
+                <b>Instrucciones:</b> {room.instructions}
+              </div>
+            )}
+          </div>
+
+          <div className="exam-questions-list">
+            {roomActs.map((act, i) => (
+              <div className="exam-question-item" key={`${act.id}-${i}`}>
+                <div className="exam-q-header">
+                  <span className="exam-q-num">Pregunta {i + 1}</span>
+                  <span className="exam-q-type">{types[act.type].label}</span>
+                  <span className="exam-q-points">[{room.scorePerQuestion} pts]</span>
+                </div>
+                <h4 className="exam-q-title">{act.title}</h4>
+                <p className="exam-q-prompt">{act.type === 'trueFalse' ? (act.details?.trueFalse?.statement || act.prompt) : act.prompt}</p>
+
+                {act.type === 'trueFalse' && (
+                  <div className="exam-tf-boxes">
+                    <span className="exam-check-box">( &nbsp; ) Verdadero</span>
+                    <span className="exam-check-box">( &nbsp; ) Falso</span>
+                  </div>
+                )}
+
+                {act.type === 'singleChoice' && (
+                  <div className="exam-sc-options">
+                    {(act.details?.singleChoice?.options || act.options).map((opt, idx) => {
+                      const label = typeof opt === 'string' ? opt : opt.label
+                      const letter = String.fromCharCode(65 + idx)
+                      return (
+                        <div className="exam-choice-row" key={idx}>
+                          <span className="exam-choice-letter">({letter})</span>
+                          <span>{label}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {act.type === 'matching' && (
+                  <div className="exam-matching-grid">
+                    <div className="exam-matching-col">
+                      <b>Columna A (Concepto)</b>
+                      {(act.details?.matching?.pairs || []).map((p, idx) => (
+                        <div key={idx} className="exam-match-item">
+                          <span>{idx + 1}. {p.left}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="exam-matching-col">
+                      <b>Columna B (Relación / Definición)</b>
+                      {scrambleRightOptions((act.details?.matching?.pairs || []).map((p) => p.right)).map((opt, idx) => (
+                        <div key={idx} className="exam-match-item">
+                          <span>[ &nbsp;&nbsp; ] {opt}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {act.type === 'sorting' && (
+                  <div className="exam-sorting-box">
+                    <p className="exam-subtext"><b>Elementos para clasificar:</b> {(act.details?.sorting?.items || []).map((item) => item.label).join(' · ')}</p>
+                    <div className="exam-sorting-cols">
+                      {(act.details?.sorting?.categories || []).map((cat) => (
+                        <div className="exam-sort-col" key={cat}>
+                          <b>{cat}</b>
+                          <div className="exam-sort-lines">
+                            <span /><span /><span />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {act.type === 'ordering' && (
+                  <div className="exam-ordering-box">
+                    <p className="exam-subtext">Numera del 1 al {(act.details?.ordering?.steps || []).length} los pasos en orden cronológico o procesal:</p>
+                    {scrambleOrderingSteps(act.details?.ordering?.steps || []).map((step, idx) => (
+                      <div key={idx} className="exam-order-row">
+                        <span className="exam-order-num-box">[ &nbsp;&nbsp; ]</span>
+                        <span>{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {act.type === 'scenario' && (
+                  <div className="exam-scenario-box">
+                    {act.details?.scenario?.situation && (
+                      <p className="exam-scenario-sit"><b>Contexto del dilema:</b> {act.details.scenario.situation}</p>
+                    )}
+                    {(act.details?.scenario?.stages || []).map((stg, stgIdx) => (
+                      <div key={stgIdx} className="exam-scenario-stg">
+                        <b>Etapa {stgIdx + 1}: {stg.prompt}</b>
+                        {stg.options.map((opt, optIdx) => (
+                          <div key={optIdx} className="exam-choice-row">
+                            <span className="exam-choice-letter">({String.fromCharCode(65 + optIdx)})</span>
+                            <span>{opt.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="modal-actions no-print">
+          <button type="button" className="outline-button" onClick={onClose}>
+            Cerrar
+          </button>
+          <button type="button" className="primary-button" onClick={() => window.print()}>
+            🖨 Imprimir o Guardar PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RoomsView({
   rooms,
   activities,
@@ -4400,6 +4665,7 @@ function RoomsView({
   const [showBuilder, setShowBuilder] = useState(() => Boolean(initialActivityIds && initialActivityIds.length > 0))
   const [builderInitialIds, setBuilderInitialIds] = useState<string[] | undefined>(() => initialActivityIds ?? undefined)
   const [builderInitialName, setBuilderInitialName] = useState<string | undefined>()
+  const [printingRoom, setPrintingRoom] = useState<Room | null>(null)
   const publishedActivities = activities.filter((item) => item.status === 'published')
 
   return (
@@ -4471,10 +4737,13 @@ function RoomsView({
               </div>
             </div>
             <div className="room-card-meta">
+              <span>📅 Creada: {formatDateTime(room.createdAt)}</span>
               <span>⌘ {room.questionCount} preguntas</span>
               <span>♧ Máx. {room.limit} estudiantes</span>
               <span>◷ {room.time ? room.time + ' min' : 'Sin límite'}</span>
               <span>◉ {room.scorePerQuestion} pts/pregunta</span>
+              {room.startedAt && <span>▶ Inicio: {formatDateTime(room.startedAt)}</span>}
+              {room.finishedAt && <span>⏹ Fin: {formatDateTime(room.finishedAt)}</span>}
             </div>
             <div className="room-activities">
               {room.activities.map((id, index) => {
@@ -4504,27 +4773,34 @@ function RoomsView({
                 </button>
               )}
               {room.status === 'finished' && (
-                <>
-                  <button className="outline-button" onClick={() => onDuplicate(room)}>
-                    Duplicar sala
-                  </button>
-                  <button className="primary-button" onClick={() => onTransition(room.id, 'archived')}>
-                    Archivar sala
-                  </button>
-                </>
+                <span className="room-finished-pill">✓ Evaluación finalizada</span>
               )}
               {room.status === 'archived' && (
-                <button className="outline-button" onClick={() => onDuplicate(room)}>
-                  Duplicar como nueva
-                </button>
+                <span className="tag archived">Archivada</span>
               )}
-              <button className="outline-button danger-button" onClick={() => onDelete(room)}>
+              <button
+                type="button"
+                className="outline-button btn-small"
+                onClick={() => setPrintingRoom(room)}
+                title="Ver e imprimir evaluación en blanco para el aula o PDF"
+              >
+                📄 Examen en blanco / PDF
+              </button>
+              <button className="outline-button danger-button btn-small" onClick={() => onDelete(room)}>
                 Eliminar sala
               </button>
             </div>
           </article>
         ))}
       </div>
+
+      {printingRoom && (
+        <BlankExamModal
+          room={printingRoom}
+          activities={activities}
+          onClose={() => setPrintingRoom(null)}
+        />
+      )}
 
       {showContentPicker && (
         <RoomContentPicker
@@ -4596,9 +4872,6 @@ function RoomBuilder({
   const [activityIds, setActivityIds] = useState<string[]>(() =>
     initialActivityIds && initialActivityIds.length ? initialActivityIds : activities.slice(0, 1).map((item) => item.id)
   )
-  const [questionCount, setQuestionCount] = useState(() =>
-    initialActivityIds && initialActivityIds.length ? initialActivityIds.length : 5
-  )
   const [limit, setLimit] = useState(30)
   const [time, setTime] = useState<number | null>(null)
   const [scorePerQuestion, setScorePerQuestion] = useState(10)
@@ -4609,7 +4882,11 @@ function RoomBuilder({
   const toggleActivity = (id: string) =>
     setActivityIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   const reuseFeatured = () =>
-    setActivityIds(activities.filter((item) => item.status === 'published').slice(0, 3).map((item) => item.id))
+    setActivityIds(activities.filter((item) => item.status === 'published').slice(0, 4).map((item) => item.id))
+
+  const selectedFormatsCount = new Set(
+    activities.filter((a) => activityIds.includes(a.id)).map((a) => a.type)
+  ).size
 
   const save = () => {
     if (!name.trim()) return setError('Escribe un nombre para la evaluación.')
@@ -4619,7 +4896,7 @@ function RoomBuilder({
       name: name.trim(),
       instructions: instructions.trim(),
       activityIds,
-      questionCount: Math.max(1, questionCount),
+      questionCount: Math.max(1, activityIds.length),
       limit: Math.max(1, limit),
       time,
       scorePerQuestion: Math.max(0, scorePerQuestion),
@@ -4630,134 +4907,148 @@ function RoomBuilder({
 
   return (
     <div className="modal-backdrop">
-      <div className="modal-card room-builder">
+      <div className="modal-card room-builder room-builder-compact">
         <div className="modal-head">
           <div>
             <p className="eyebrow">CONFIGURACIÓN DE EVALUACIÓN</p>
             <h2>Prepara tu sala</h2>
-            <p className="modal-subtitle">Estos ajustes se definen antes de compartir el código.</p>
+            <p className="modal-subtitle">Combina libremente de 1 a 6 formatos sin límites artificiales.</p>
           </div>
-          <button type="button" className="icon-button" onClick={onCancel}>
+          <button type="button" className="icon-button" onClick={onCancel} aria-label="Cerrar">
             ×
           </button>
         </div>
-        <div className="form-grid">
-          <label>
-            Nombre de la evaluación *
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            Cantidad de estudiantes
-            <input
-              type="number"
-              min="1"
-              max="200"
-              value={limit}
-              onChange={(event) => setLimit(Number(event.target.value))}
-            />
-          </label>
-        </div>
-        <label>
-          Instrucciones para estudiantes
-          <textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={2} />
-        </label>
-        <div className="form-grid">
-          <label>
-            Cantidad de preguntas
-            <span className="field-hint">Las actividades seleccionadas se repiten si hace falta.</span>
-            <input
-              type="number"
-              min="1"
-              max="50"
-              value={questionCount}
-              onChange={(event) => setQuestionCount(Number(event.target.value))}
-            />
-          </label>
-          <label>
-            Puntaje por pregunta
-            <input
-              type="number"
-              min="0"
-              max="1000"
-              value={scorePerQuestion}
-              onChange={(event) => setScorePerQuestion(Number(event.target.value))}
-            />
-          </label>
-        </div>
-        <div className="form-grid">
-          <label>
-            Tiempo total
-            <select
-              value={time ?? ''}
-              onChange={(event) => setTime(event.target.value ? Number(event.target.value) : null)}
-            >
-              <option value="">Sin límite</option>
-              <option value="5">5 minutos</option>
-              <option value="10">10 minutos</option>
-              <option value="20">20 minutos</option>
-              <option value="30">30 minutos</option>
-              <option value="45">45 minutos</option>
-            </select>
-          </label>
-          <div className="settings-checks">
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={shuffleQuestions}
-                onChange={(event) => setShuffleQuestions(event.target.checked)}
-              />{' '}
-              Mezclar preguntas
+
+        {/* Formulario de configuración superior compacto en 2 columnas */}
+        <div className="room-builder-top-grid">
+          <div className="builder-col">
+            <label>
+              Nombre de la evaluación *
+              <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Evaluación de Biología" />
             </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={allowBack}
-                onChange={(event) => setAllowBack(event.target.checked)}
-              />{' '}
-              Permitir volver atrás
+            <div className="form-grid-inner">
+              <label>
+                Estudiantes máx.
+                <input
+                  type="number"
+                  min="1"
+                  max="200"
+                  value={limit}
+                  onChange={(event) => setLimit(Number(event.target.value))}
+                />
+              </label>
+              <label>
+                Puntos por pregunta
+                <input
+                  type="number"
+                  min="0"
+                  max="1000"
+                  value={scorePerQuestion}
+                  onChange={(event) => setScorePerQuestion(Number(event.target.value))}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="builder-col">
+            <label>
+              Instrucciones para el grupo
+              <textarea
+                value={instructions}
+                onChange={(event) => setInstructions(event.target.value)}
+                rows={2}
+                placeholder="Instrucciones breves visibles para los estudiantes"
+              />
             </label>
+            <div className="builder-time-options">
+              <label>
+                Tiempo total
+                <select
+                  value={time ?? ''}
+                  onChange={(event) => setTime(event.target.value ? Number(event.target.value) : null)}
+                >
+                  <option value="">Sin límite de tiempo</option>
+                  <option value="5">5 minutos</option>
+                  <option value="10">10 minutos</option>
+                  <option value="15">15 minutos</option>
+                  <option value="20">20 minutos</option>
+                  <option value="30">30 minutos</option>
+                  <option value="45">45 minutos</option>
+                  <option value="60">60 minutos</option>
+                </select>
+              </label>
+              <div className="settings-checks-compact">
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={shuffleQuestions}
+                    onChange={(event) => setShuffleQuestions(event.target.checked)}
+                  />{' '}
+                  Mezclar orden
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={allowBack}
+                    onChange={(event) => setAllowBack(event.target.checked)}
+                  />{' '}
+                  Volver atrás
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 
+        {/* Banco de preguntas enriquecido con conteo en tiempo real */}
         <section className="activity-selection">
           <div className="block-heading">
             <div>
               <p className="eyebrow">BANCO DE PREGUNTAS</p>
-              <b>Elige las actividades que formarán la evaluación</b>
+              <b>Elige las actividades del examen ({activityIds.length} seleccionadas)</b>
               <small className="field-hint">
-                Combina libremente los tipos y preguntas que desees según tu planificación pedagógica.
+                Cada actividad marcada corresponde a una pregunta real en la evaluación.
               </small>
             </div>
-            <div>
+            <div className="selection-stats-bar">
               <button
                 type="button"
-                className="outline-button"
+                className="outline-button btn-small"
                 onClick={reuseFeatured}
                 disabled={!activities.length}
+                title="Selecciona rápidamente actividades publicadas"
               >
-                Reutilizar destacadas
+                Destacadas
               </button>
-              <span className="selection-count">{activityIds.length} seleccionadas</span>
+              <span className="selection-count">
+                <b>{activityIds.length}</b> pregunta{activityIds.length === 1 ? '' : 's'} ({selectedFormatsCount} formato{selectedFormatsCount === 1 ? '' : 's'}) · <b>{activityIds.length * scorePerQuestion} pts</b>
+              </span>
             </div>
           </div>
+
           {activities.length ? (
-            <div className="activity-check-list">
+            <div className="activity-check-list-enriched">
               {activities.map((activity) => {
                 const checked = activityIds.includes(activity.id)
                 return (
-                  <label className={`activity-check ${checked ? 'selected' : ''}`} key={activity.id}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleActivity(activity.id)}
-                    />
-                    <span className={`list-type type-${activity.type}`}>{types[activity.type].icon}</span>
-                    <span>
-                      <b>{activity.title}</b>
-                      <small>
-                        {types[activity.type].label} · {activity.topic}
-                      </small>
-                    </span>
+                  <label className={`activity-check-card ${checked ? 'selected' : ''}`} key={activity.id}>
+                    <div className="activity-check-header">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleActivity(activity.id)}
+                      />
+                      <span className={`list-type type-${activity.type}`}>
+                        {types[activity.type].icon}
+                      </span>
+                      <span className="activity-check-format-label">
+                        {types[activity.type].label}
+                      </span>
+                      {activity.topic && <span className="activity-check-topic">{activity.topic}</span>}
+                    </div>
+                    <div className="activity-check-body">
+                      <h4 className="activity-check-title">{activity.title}</h4>
+                      <p className="activity-check-prompt">{activity.prompt}</p>
+                    </div>
                   </label>
                 )
               })}
@@ -4773,15 +5064,14 @@ function RoomBuilder({
 
         {error && <div className="form-error">! {error}</div>}
         <div className="form-note">
-          ✓ Una sala iniciada ya no puede modificarse. El tiempo total, el límite, las preguntas y el puntaje quedan
-          registrados para esta evaluación.
+          ✓ Una sala iniciada ya no puede modificarse. Las {activityIds.length} preguntas seleccionadas sumarán un puntaje total de {activityIds.length * scorePerQuestion} pts.
         </div>
         <div className="modal-actions">
           <button type="button" className="outline-button" onClick={onCancel}>
             Cancelar
           </button>
-          <button type="button" className="primary-button" onClick={save}>
-            Crear sala configurada
+          <button type="button" className="primary-button" onClick={save} disabled={!activityIds.length}>
+            Crear sala ({activityIds.length} preguntas)
           </button>
         </div>
       </div>
@@ -5074,10 +5364,19 @@ function ResultsView({
     )
   }
 
+  // Orden cronológico de salas con resultados (más recientes primero)
+  const sortedResultRooms = [...allResultRooms].sort((a, b) => {
+    const timeA = roomMap.get(a.id)?.createdAt || a.attempts[0]?.startedAt || ''
+    const timeB = roomMap.get(b.id)?.createdAt || b.attempts[0]?.startedAt || ''
+    return timeB.localeCompare(timeA)
+  })
+
   // VISTA NIVEL 1: LISTADO DE SALAS CON RESULTADOS
-  const displayedRooms = selectedRoomFilter === 'all'
-    ? allResultRooms
-    : allResultRooms.filter((r) => r.id === selectedRoomFilter)
+  const displayedRooms = selectedRoomFilter === 'none'
+    ? []
+    : selectedRoomFilter === 'all'
+      ? sortedResultRooms
+      : sortedResultRooms.filter((r) => r.id === selectedRoomFilter)
 
   return (
     <>
@@ -5090,13 +5389,13 @@ function ResultsView({
             <select
               value={selectedRoomFilter}
               onChange={(e) => setSelectedRoomFilter(e.target.value)}
-              disabled={allResultRooms.length === 0}
               aria-label="Seleccionar o filtrar sala para exportar"
             >
               <option value="all">
-                {allResultRooms.length ? `Todas las salas (${allResultRooms.length})` : 'Sin salas con datos'}
+                {sortedResultRooms.length ? `Todas las salas (${sortedResultRooms.length})` : 'Sin salas con datos'}
               </option>
-              {allResultRooms.map((r) => (
+              <option value="none">Ninguna sala</option>
+              {sortedResultRooms.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name} ({r.code}) · {r.templateTitle}
                 </option>
@@ -5108,14 +5407,14 @@ function ResultsView({
               onClick={() => {
                 if (selectedRoomFilter === 'all') {
                   onExport()
-                } else {
+                } else if (selectedRoomFilter !== 'none') {
                   onExport(selectedRoomFilter)
                 }
               }}
-              disabled={attempts.length === 0}
-              title={selectedRoomFilter === 'all' ? 'Exportar todos los resultados a CSV' : 'Exportar los resultados de la sala seleccionada a CSV'}
+              disabled={selectedRoomFilter === 'none' || attempts.length === 0}
+              title={selectedRoomFilter === 'none' ? 'Selecciona una sala o Todas las salas para exportar' : selectedRoomFilter === 'all' ? 'Exportar todos los resultados a CSV' : 'Exportar los resultados de la sala seleccionada a CSV'}
             >
-              {selectedRoomFilter === 'all' ? '↓ Exportar selección' : '↓ Exportar sala a CSV'}
+              {selectedRoomFilter === 'all' ? '↓ Exportar todas a CSV' : selectedRoomFilter === 'none' ? '↓ Exportar selección' : '↓ Exportar sala a CSV'}
             </button>
             {selectedRoomFilter !== 'all' && (
               <button
@@ -5139,8 +5438,10 @@ function ResultsView({
           </div>
           <span className="muted">
             {selectedRoomFilter === 'all'
-              ? `${allResultRooms.length} sala${allResultRooms.length === 1 ? '' : 's'} con datos`
-              : `Mostrando 1 sala de ${allResultRooms.length}`}
+              ? `${sortedResultRooms.length} sala${sortedResultRooms.length === 1 ? '' : 's'} con datos`
+              : selectedRoomFilter === 'none'
+              ? 'Ninguna sala seleccionada'
+              : `Mostrando 1 sala de ${sortedResultRooms.length}`}
           </span>
         </div>
 
@@ -5233,6 +5534,12 @@ function ResultsView({
               )
             })}
           </div>
+        ) : selectedRoomFilter === 'none' ? (
+          <div className="results-empty">
+            <span>📋</span>
+            <h3>Ninguna sala seleccionada</h3>
+            <p>Elige "Todas las salas" o una sala específica en el selector superior para revisar sus resultados.</p>
+          </div>
         ) : (
           <div className="results-empty">
             <span>↗</span>
@@ -5247,7 +5554,21 @@ function ResultsView({
 }
 
 
-function formatDate(value: string): string { return new Intl.DateTimeFormat('es-BO', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
+function formatDateTime(value?: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return String(value)
+  const day = d.getDate().toString().padStart(2, '0')
+  const month = (d.getMonth() + 1).toString().padStart(2, '0')
+  const year = d.getFullYear()
+  const hours = d.getHours().toString().padStart(2, '0')
+  const minutes = d.getMinutes().toString().padStart(2, '0')
+  return `${day}/${month}/${year} · ${hours}:${minutes}`
+}
+
+function formatDate(value: string): string {
+  return formatDateTime(value)
+}
 function auditEventLabel(type: string): string { return type === 'joined' ? 'Ingreso a la evaluación' : type === 'answer_submitted' ? 'Respuesta registrada' : type === 'omitted' ? 'Pregunta omitida' : type === 'navigated_back' ? 'Regreso a pregunta anterior' : type === 'timeout' ? 'Tiempo agotado' : type === 'finished' ? 'Intento finalizado' : type.replaceAll('_', ' ') }
 function studentAttemptKey(roomId: string, name: string): string { return roomId + '::' + name.trim().toLowerCase() }
 function sameAttemptIdentity(left: StudentAttempt, right: StudentAttempt): boolean {
@@ -5257,27 +5578,463 @@ function hasStudentAttempt(roomId: string, name: string): boolean { return readS
 function shuffleItems<T>(items: T[]): T[] { const result = [...items]; for (let index = result.length - 1; index > 0; index -= 1) { const target = Math.floor(Math.random() * (index + 1)); [result[index], result[target]] = [result[target], result[index]] } return result }
 
 function StudentView({ room, roomCode, setRoomCode, studentName, setStudentName, onStart, onRefresh, onLeave }: { room: Room | null; roomCode: string; setRoomCode: (value: string) => void; studentName: string; setStudentName: (value: string) => void; onStart: () => void; onRefresh: () => void; onLeave: () => void }) {
-  if (room?.status === 'waiting') return <div className="student-entry"><div className="student-orb">◷</div><p className="eyebrow">SALA ABIERTA</p><h1>Estás dentro.</h1><p>La sala <b>{room.name}</b> está esperando que el docente inicie la evaluación.</p><div className="entry-card waiting-card"><div className="waiting-code"><small>CÓDIGO</small><strong>{room.code}</strong></div><div className="waiting-state"><span className="waiting-pulse" /><div><b>Esperando al docente</b><small>Cuando comience, podrás responder las {room.questionCount} preguntas.</small></div></div><button className="primary-button wide" onClick={onRefresh}>Actualizar estado</button><button className="text-button wide" onClick={onLeave}>Cambiar de sala</button></div><div className="student-footer">EvaluEdu · tu participación es privada</div></div>
-  return <div className="student-entry"><div className="student-orb">✦</div><p className="eyebrow">ENTRADA DE ESTUDIANTES</p><h1>Aprende haciendo.</h1><p>Entra a una sala con el código de tu docente.</p><div className="entry-card"><label>Nombre completo<input value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Escribe tu nombre completo" /></label><label>Código de sala<input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="Ej. EDU-274" /></label><button className="primary-button wide" onClick={onStart}>Entrar a la sala →</button><small>La evaluación comenzará cuando tu docente dé inicio a la sala.</small></div><div className="student-footer">EvaluEdu · evaluación activa <span>•</span> Modo estudiante</div></div>
+  if (room?.status === 'waiting') {
+    return (
+      <div className="student-entry">
+        <div className="waiting-mascot-box">
+          <div className="waiting-mascot-glow">
+            <IconSparkMascot size={58} />
+          </div>
+          <p className="eyebrow">SALA ABIERTA · EN ESPERA</p>
+          <h1>¡Todo listo, {studentName.trim().split(' ')[0] || 'estudiante'}!</h1>
+          <p>Tu ingreso a <b>{room.name}</b> está confirmado. La evaluación comenzará automáticamente cuando el docente dé inicio a la sala.</p>
+        </div>
+        <div className="entry-card waiting-card">
+          <div className="waiting-code">
+            <small>CÓDIGO DE TU SALA</small>
+            <strong>{room.code}</strong>
+          </div>
+          <div className="waiting-state">
+            <span className="waiting-pulse" />
+            <div>
+              <b>Docente preparando el examen</b>
+              <small>Esta pantalla se activará sola en cuanto comience la prueba ({room.questionCount} preguntas preparadas).</small>
+            </div>
+          </div>
+          <button type="button" className="primary-button wide" onClick={onRefresh}>
+            🔄 Comprobar inicio ahora
+          </button>
+          <button type="button" className="text-button wide" onClick={onLeave}>
+            Cambiar de sala o nombre
+          </button>
+        </div>
+        <div className="student-footer">EvaluEdu · tu participación es privada y segura</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="student-entry">
+      <div className="student-orb mascot-mark"><IconSparkMascot size={28} /></div>
+      <p className="eyebrow">ENTRADA DE ESTUDIANTES</p>
+      <h1>Aprende haciendo.</h1>
+      <p>Entra a una sala con el código de tu docente.</p>
+      <div className="entry-card">
+        <label>
+          Nombre completo
+          <input
+            value={studentName}
+            onChange={(event) => setStudentName(event.target.value)}
+            placeholder="Escribe tu nombre completo"
+          />
+        </label>
+        <label>
+          Código de sala
+          <input
+            value={roomCode}
+            onChange={(event) => setRoomCode(event.target.value.toUpperCase())}
+            placeholder="Ej. EDU-274"
+          />
+        </label>
+        <button className="primary-button wide" onClick={onStart}>
+          Entrar a la sala →
+        </button>
+        <small>La evaluación comenzará cuando tu docente dé inicio a la sala.</small>
+      </div>
+      <div className="student-footer">EvaluEdu · evaluación activa <span>•</span> Modo estudiante</div>
+    </div>
+  )
 }
 
-function StudentCompletion({ room, onLeave }: { room: Room | null; onLeave: () => void }) { return <div className="student-entry"><div className="student-orb completion-orb">✓</div><p className="eyebrow">PARTICIPACIÓN REGISTRADA</p><h1>Terminaste.</h1><p>Tu participación en <b>{room?.name ?? 'la evaluación'}</b> fue enviada al docente.</p><div className="entry-card completion-card"><div className="completion-line"><span>✓</span><div><b>Respuesta recibida</b><small>El docente podrá revisar tus evidencias y retroalimentación.</small></div></div><div className="privacy-note">🔒 El resultado final no se muestra en la vista del estudiante.</div><button className="outline-button wide" onClick={onLeave}>Salir de la sala</button></div><div className="student-footer">EvaluEdu · gracias por participar</div></div> }
+function StudentCompletion({
+  room,
+  attempt,
+  onLeave,
+}: {
+  room: Room | null
+  attempt?: StudentAttempt | null
+  onLeave: () => void
+}) {
+  const downloadVoucher = () => {
+    if (!room || !attempt) return
+    const lines = [
+      '============================================================',
+      '                   COMPROBANTE DE ENTREGA                   ',
+      '                          EvaluEdu                          ',
+      '============================================================',
+      `Identificador:       ${attempt.id}`,
+      `Código de sala:      ${attempt.roomCode}`,
+      `Evaluación:          ${attempt.roomName}`,
+      `Estudiante:          ${attempt.studentName}`,
+      `Fecha de inicio:     ${formatDateTime(attempt.startedAt)}`,
+      `Fecha de entrega:    ${formatDateTime(attempt.finishedAt)}`,
+      `Estado:              ${attempt.status === 'timeout' ? 'Tiempo límite completado' : 'Finalizada y entregada'}`,
+      `Preguntas totales:   ${attempt.totalQuestions}`,
+      `Respondidas:         ${attempt.answeredCount}`,
+      `Omitidas:            ${attempt.omittedCount}`,
+      '------------------------------------------------------------',
+      'DETALLE DE RESPUESTAS REGISTRADAS:',
+      ...attempt.answers.map(
+        (a, i) =>
+          `${i + 1}. [${types[a.activityType]?.label || a.activityType}] ${a.activityTitle}\n   Respuesta entregada: ${a.response ? a.response.replace(/\n/g, ' ') : '(Omitida)'}\n   Tiempo invertido:   ${a.timeSeconds}s\n`
+      ),
+      '------------------------------------------------------------',
+      'Nota pedagógica y de privacidad:',
+      'Este documento certifica la recepción de tus evidencias en',
+      'el sistema de EvaluEdu. Por criterio formativo institucional,',
+      'la retroalimentación orientadora ya fue entregada en cada',
+      'actividad y el puntaje acumulado es de custodia docente.',
+      '============================================================',
+    ]
+    const content = lines.join('\n')
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `comprobante-${attempt.roomCode}-${attempt.studentName.trim().replace(/\s+/g, '_')}.txt`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
+  return (
+    <div className="student-entry">
+      <div className="student-orb completion-orb">✓</div>
+      <p className="eyebrow">PARTICIPACIÓN REGISTRADA</p>
+      <h1>¡Terminaste!</h1>
+      <p>Tu participación en <b>{room?.name ?? 'la evaluación'}</b> fue enviada con éxito al docente.</p>
+      <div className="entry-card completion-card">
+        <div className="completion-line">
+          <span>✓</span>
+          <div>
+            <b>Respuesta recibida en el servidor</b>
+            <small>Tus evidencias y tiempos quedaron registrados de forma segura.</small>
+          </div>
+        </div>
+        {attempt && (
+          <div className="completion-voucher-box">
+            <div className="voucher-meta">
+              <span>Código: <b>{attempt.roomCode}</b></span>
+              <span>· {attempt.answeredCount} respondidas</span>
+              <span>· {formatDateTime(attempt.finishedAt)}</span>
+            </div>
+            <button
+              type="button"
+              className="outline-button wide voucher-download-btn"
+              onClick={downloadVoucher}
+              title="Descargar comprobante en texto plano para respaldo"
+            >
+              📥 Descargar comprobante de entrega (.txt)
+            </button>
+          </div>
+        )}
+        <div className="privacy-note">🔒 Privacidad activa: el resultado y calificación final no se exponen al grupo.</div>
+        <button className="primary-button wide" onClick={onLeave}>
+          Salir de la sala
+        </button>
+      </div>
+      <div className="student-footer">EvaluEdu · gracias por participar</div>
+    </div>
+  )
+}
 
 function formatSeconds(seconds: number): string { return Math.floor(seconds / 60).toString().padStart(2, '0') + ':' + (seconds % 60).toString().padStart(2, '0') }
 
-function PlayView({ activity, index, totalCount, allowBack, timeLimit, startedAt, savedResponse, submitted, onSubmit, onSkip, onPrevious, onTimeExpired, onNext }: { activity?: Activity; index: number; totalCount: number; allowBack: boolean; timeLimit: number | null; startedAt?: string; savedResponse?: ActivityResponse; submitted: boolean; onSubmit: (response: ActivityResponse) => void; onSkip: () => void; onPrevious: () => void; onTimeExpired: () => void; onNext: () => void }) {
+function PlayView({
+  activity,
+  index,
+  totalCount,
+  allowBack,
+  timeLimit,
+  startedAt,
+  savedResponse,
+  responsesRecorded,
+  onGoToQuestion,
+  submitted,
+  onSubmit,
+  onSkip,
+  onPrevious,
+  onTimeExpired,
+  onNext,
+}: {
+  activity?: Activity
+  index: number
+  totalCount: number
+  allowBack: boolean
+  timeLimit: number | null
+  startedAt?: string
+  savedResponse?: ActivityResponse
+  responsesRecorded?: Record<number, ActivityResponse>
+  onGoToQuestion?: (idx: number) => void
+  submitted: boolean
+  onSubmit: (response: ActivityResponse) => void
+  onSkip: () => void
+  onPrevious: () => void
+  onTimeExpired: () => void
+  onNext: () => void
+}) {
   const item = activity
-  const remainingSeconds = () => timeLimit ? Math.max(0, timeLimit * 60 - Math.floor((Date.now() - (startedAt ? Date.parse(startedAt) : Date.now())) / 1000)) : null
+  const remainingSeconds = () =>
+    timeLimit
+      ? Math.max(0, timeLimit * 60 - Math.floor((Date.now() - (startedAt ? Date.parse(startedAt) : Date.now())) / 1000))
+      : null
   const [secondsLeft, setSecondsLeft] = useState<number | null>(remainingSeconds)
-  const [draftResponse, setDraftResponse] = useState<ActivityResponse>(() => item ? savedResponse ?? createInitialResponse(item) : { type: 'singleChoice', value: '' })
-  useEffect(() => { if (item) setDraftResponse(savedResponse ?? createInitialResponse(item)) }, [item?.id, savedResponse])
-  useEffect(() => { setSecondsLeft(remainingSeconds()) }, [timeLimit, startedAt])
-  useEffect(() => { if (secondsLeft === null || submitted) return; const timer = window.setInterval(() => setSecondsLeft((current) => { if (current === null) return null; if (current <= 1) { onTimeExpired(); return 0 } return current - 1 }), 1000); return () => window.clearInterval(timer) }, [secondsLeft, submitted, onTimeExpired])
-  if (!item) return <div className="empty-state"><h2>No hay actividades publicadas.</h2></div>
+  const [draftResponse, setDraftResponse] = useState<ActivityResponse>(() =>
+    item ? savedResponse ?? createInitialResponse(item) : { type: 'singleChoice', value: '' }
+  )
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+
+  useEffect(() => {
+    if (item) setDraftResponse(savedResponse ?? createInitialResponse(item))
+  }, [item?.id, savedResponse])
+
+  useEffect(() => {
+    setSecondsLeft(remainingSeconds())
+  }, [timeLimit, startedAt])
+
+  useEffect(() => {
+    if (secondsLeft === null || submitted) return
+    const timer = window.setInterval(() => {
+      setSecondsLeft((current) => {
+        if (current === null) return null
+        if (current <= 1) {
+          onTimeExpired()
+          return 0
+        }
+        return current - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [secondsLeft, submitted, onTimeExpired])
+
+  if (!item) {
+    return (
+      <div className="play-wrap">
+        <div className="play-card empty-state">
+          <span className="brand-mark mascot-mark" style={{ margin: '0 auto 16px' }}>
+            <IconSparkMascot size={32} />
+          </span>
+          <h2>Cargando actividades de la sala…</h2>
+          <p>
+            No encontramos actividades para esta sala en este momento. Si la evaluación ya comenzó, espera unos segundos
+            o vuelve a ingresar.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const runtime = activityRuntime(item)
   const canSubmit = isResponseComplete(item, draftResponse)
-  const changeSimple = (value: string) => setDraftResponse(item.type === 'trueFalse' ? { type: 'trueFalse', value } : { type: 'singleChoice', value })
-  return <div className="play-wrap"><div className="play-top"><span>ACTIVIDAD {index + 1} DE {totalCount}</span><span>{secondsLeft === null ? 'Sin límite de tiempo' : 'Tiempo restante ' + formatSeconds(secondsLeft)}</span></div><div className="play-card"><div className={'activity-type type-' + item.type}><span>{types[item.type].icon}</span><small>{types[item.type].label}</small></div><h1>{item.title}</h1>{item.type === 'trueFalse' && runtime.trueFalse.context ? <p className="editor-help">{runtime.trueFalse.context}</p> : item.type === 'singleChoice' && runtime.singleChoice.context ? <p className="editor-help">{runtime.singleChoice.context}</p> : item.type === 'matching' && runtime.matching.context ? <p className="editor-help">{runtime.matching.context}</p> : item.type === 'sorting' && runtime.sorting.context ? <p className="editor-help">{runtime.sorting.context}</p> : item.type === 'ordering' && runtime.ordering.context ? <p className="editor-help">{runtime.ordering.context}</p> : null}<p className="play-prompt">{item.type === 'trueFalse' ? runtime.trueFalse.statement : item.prompt}</p><div className={'answer-area answer-' + item.type}>{item.type === 'scenario' && draftResponse.type === 'scenario' ? <ScenarioQuestion runtime={runtime.scenario} response={draftResponse} disabled={submitted} onChange={(choices) => setDraftResponse({ type: 'scenario', choices })} /> : item.type === 'matching' && draftResponse.type === 'matching' ? <MatchingQuestion runtime={runtime.matching} response={draftResponse} disabled={submitted} onChange={(pairs) => setDraftResponse({ type: 'matching', pairs })} /> : item.type === 'sorting' && draftResponse.type === 'sorting' ? <SortingQuestion runtime={runtime.sorting} response={draftResponse} disabled={submitted} onChange={(assignments) => setDraftResponse({ type: 'sorting', assignments })} /> : item.type === 'ordering' && draftResponse.type === 'ordering' ? <OrderingQuestion runtime={runtime.ordering} response={draftResponse} disabled={submitted} onChange={(order) => setDraftResponse({ type: 'ordering', order })} /> : (item.type === 'trueFalse' ? ['Verdadero', 'Falso'] : runtime.singleChoice.options.map((option) => option.label)).map((option) => <button key={option} className={'answer-option ' + ((draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') && draftResponse.value === option ? 'chosen' : '')} onClick={() => !submitted && changeSimple(option)} disabled={submitted}><span className="option-mark">{(draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') && draftResponse.value === option ? '✓' : '○'}</span>{option}</button>)}</div>{submitted && <div className="feedback-box"><span>✦</span><div><b>Respuesta registrada.</b>{item.type === 'trueFalse' ? <p>{runtime.trueFalse.hint ?? item.feedback}</p> : item.type === 'singleChoice' ? <p>{runtime.singleChoice.hint ?? item.feedback}</p> : item.type === 'matching' ? <p>{runtime.matching.hint ?? item.feedback}</p> : item.type === 'sorting' ? <p>{runtime.sorting.hint ?? item.feedback}</p> : item.type === 'ordering' ? <p>{runtime.ordering.hint ?? item.feedback}</p> : item.type === 'scenario' ? <p>{runtime.scenario.hint ?? item.feedback}</p> : <p>{item.feedback}</p>}</div></div>}<div className="play-actions">{allowBack && index > 0 && <button className="outline-button" onClick={onPrevious}>← Anterior</button>}<div className="play-actions-right">{!submitted && <button className="outline-button" onClick={onSkip}>Omitir por ahora</button>}{submitted ? <button className="primary-button" onClick={onNext}>{index + 1 >= totalCount ? 'Finalizar evaluación →' : 'Siguiente actividad →'}</button> : <button className="primary-button" disabled={!canSubmit} onClick={() => onSubmit(draftResponse)}>Comprobar respuesta</button>}</div></div></div></div>
+  const changeSimple = (value: string) =>
+    setDraftResponse(item.type === 'trueFalse' ? { type: 'trueFalse', value } : { type: 'singleChoice', value })
+
+  const answeredCount = Object.keys(responsesRecorded ?? {}).length
+  const isLastQuestion = index + 1 >= totalCount
+
+  const handleNextClick = () => {
+    if (isLastQuestion) {
+      if (answeredCount < totalCount) {
+        setShowConfirmModal(true)
+        return
+      }
+    }
+    onNext()
+  }
+
+  return (
+    <div className="play-wrap">
+      {/* 3.3 Barra de avance visual (Stepper) */}
+      <div className="play-stepper-wrap">
+        <div className="play-stepper" aria-label="Progreso de actividades">
+          {Array.from({ length: totalCount }).map((_, stepIdx) => {
+            const isCurrent = stepIdx === index
+            const isRecorded = Boolean(responsesRecorded && responsesRecorded[stepIdx])
+            return (
+              <button
+                key={stepIdx}
+                type="button"
+                disabled={!allowBack && stepIdx < index}
+                className={`stepper-node ${isCurrent ? 'active' : ''} ${isRecorded ? 'done' : ''}`}
+                onClick={() => onGoToQuestion?.(stepIdx)}
+                title={`Actividad ${stepIdx + 1}${isRecorded ? ' (completada)' : isCurrent ? ' (actual)' : ''}`}
+              >
+                {isRecorded && !isCurrent ? '✓' : stepIdx + 1}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="play-top">
+        <span>ACTIVIDAD {index + 1} DE {totalCount}</span>
+        <span>{secondsLeft === null ? 'Sin límite de tiempo' : 'Tiempo restante ' + formatSeconds(secondsLeft)}</span>
+      </div>
+
+      <div className="play-card">
+        <div className={'activity-type type-' + item.type}>
+          <span>{types[item.type].icon}</span>
+          <small>{types[item.type].label}</small>
+        </div>
+        <h1>{item.title}</h1>
+        {item.type === 'trueFalse' && runtime.trueFalse.context ? (
+          <p className="editor-help">{runtime.trueFalse.context}</p>
+        ) : item.type === 'singleChoice' && runtime.singleChoice.context ? (
+          <p className="editor-help">{runtime.singleChoice.context}</p>
+        ) : item.type === 'matching' && runtime.matching.context ? (
+          <p className="editor-help">{runtime.matching.context}</p>
+        ) : item.type === 'sorting' && runtime.sorting.context ? (
+          <p className="editor-help">{runtime.sorting.context}</p>
+        ) : item.type === 'ordering' && runtime.ordering.context ? (
+          <p className="editor-help">{runtime.ordering.context}</p>
+        ) : null}
+
+        <p className="play-prompt">
+          {item.type === 'trueFalse' ? runtime.trueFalse.statement : item.prompt}
+        </p>
+
+        <div className={'answer-area answer-' + item.type}>
+          {item.type === 'scenario' && draftResponse.type === 'scenario' ? (
+            <ScenarioQuestion
+              runtime={runtime.scenario}
+              response={draftResponse}
+              disabled={submitted}
+              onChange={(choices) => setDraftResponse({ type: 'scenario', choices })}
+            />
+          ) : item.type === 'matching' && draftResponse.type === 'matching' ? (
+            <MatchingQuestion
+              runtime={runtime.matching}
+              response={draftResponse}
+              disabled={submitted}
+              onChange={(pairs) => setDraftResponse({ type: 'matching', pairs })}
+            />
+          ) : item.type === 'sorting' && draftResponse.type === 'sorting' ? (
+            <SortingQuestion
+              runtime={runtime.sorting}
+              response={draftResponse}
+              disabled={submitted}
+              onChange={(assignments) => setDraftResponse({ type: 'sorting', assignments })}
+            />
+          ) : item.type === 'ordering' && draftResponse.type === 'ordering' ? (
+            <OrderingQuestion
+              runtime={runtime.ordering}
+              response={draftResponse}
+              disabled={submitted}
+              onChange={(order) => setDraftResponse({ type: 'ordering', order })}
+            />
+          ) : (
+            (item.type === 'trueFalse' ? ['Verdadero', 'Falso'] : runtime.singleChoice.options.map((option) => option.label)).map(
+              (option) => (
+                <button
+                  key={option}
+                  className={
+                    'answer-option ' +
+                    ((draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') &&
+                    draftResponse.value === option
+                      ? 'chosen'
+                      : '')
+                  }
+                  onClick={() => !submitted && changeSimple(option)}
+                  disabled={submitted}
+                >
+                  <span className="option-mark">
+                    {(draftResponse.type === 'trueFalse' || draftResponse.type === 'singleChoice') &&
+                    draftResponse.value === option
+                      ? '✓'
+                      : '○'}
+                  </span>
+                  {option}
+                </button>
+              )
+            )
+          )}
+        </div>
+
+        {submitted && (
+          <div className="feedback-box">
+            <span>✦</span>
+            <div>
+              <b>Respuesta registrada.</b>
+              {item.type === 'trueFalse' ? (
+                <p>{runtime.trueFalse.hint ?? item.feedback}</p>
+              ) : item.type === 'singleChoice' ? (
+                <p>{runtime.singleChoice.hint ?? item.feedback}</p>
+              ) : item.type === 'matching' ? (
+                <p>{runtime.matching.hint ?? item.feedback}</p>
+              ) : item.type === 'sorting' ? (
+                <p>{runtime.sorting.hint ?? item.feedback}</p>
+              ) : item.type === 'ordering' ? (
+                <p>{runtime.ordering.hint ?? item.feedback}</p>
+              ) : item.type === 'scenario' ? (
+                <p>{runtime.scenario.hint ?? item.feedback}</p>
+              ) : (
+                <p>{item.feedback}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="play-actions">
+          {allowBack && index > 0 && (
+            <button className="outline-button" onClick={onPrevious}>
+              ← Anterior
+            </button>
+          )}
+          <div className="play-actions-right">
+            {!submitted && (
+              <button className="outline-button" onClick={onSkip}>
+                Omitir por ahora
+              </button>
+            )}
+            {submitted ? (
+              <button className="primary-button" onClick={handleNextClick}>
+                {index + 1 >= totalCount ? 'Finalizar evaluación →' : 'Siguiente actividad →'}
+              </button>
+            ) : (
+              <button className="primary-button" disabled={!canSubmit} onClick={() => onSubmit(draftResponse)}>
+                Comprobar respuesta
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 3.5 Diálogo de confirmación previa al finalizar si quedan preguntas pendientes */}
+      {showConfirmModal && (
+        <div className="modal-backdrop">
+          <div className="modal-card finish-confirm-modal">
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">FINALIZAR EVALUACIÓN</p>
+                <h2>¿Entregar ahora tus respuestas?</h2>
+                <p className="modal-subtitle">
+                  Has respondido <b>{answeredCount} de {totalCount}</b> actividades.
+                  {totalCount - answeredCount > 0 ? (
+                    ` Quedan ${totalCount - answeredCount} pregunta${totalCount - answeredCount === 1 ? '' : 's'} sin responder o pendientes.`
+                  ) : (
+                    ' Has completado todas las preguntas de la evaluación.'
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="outline-button" onClick={() => setShowConfirmModal(false)}>
+                ← Volver y revisar
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setShowConfirmModal(false)
+                  onNext()
+                }}
+              >
+                Entregar evaluación
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 function ScenarioQuestion({
   runtime,

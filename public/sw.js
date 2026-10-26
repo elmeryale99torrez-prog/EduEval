@@ -1,4 +1,4 @@
-const VERSION = 'evaluedu-shell-v9'
+const VERSION = 'evaluedu-shell-v10'
 
 self.addEventListener('install', (event) => {
   self.skipWaiting()

@@ -749,3 +749,61 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
 - **Verificación:**
   - `npm run test`: **91/91 pruebas unitarias aprobadas (14 suites en verde)**.
   - `npm run build`: compilación de producción con Vite (`tsc -b && vite build`) limpia y exitosa (código 0).
+
+
+### Hoja de ruta acordada — Estabilización móvil, optimización de salas y experiencia pedagógica enriquecida — 2026-10-26
+
+- **Fase 1: Estabilidad crítica y navegación móvil:**
+  1. *Solución a "No hay actividades publicadas" en el móvil:* El reproductor del estudiante buscará directamente en las actividades de la sala (`activities.find`) sin exigir la etiqueta restrictiva `'published'`.
+  2. *Bloqueo de scroll de fondo (Body Scroll Lock):* Aplicar `body-modal-locked` (`overflow: hidden; touch-action: none;`) y `overscroll-behavior: contain;` al abrir modales (importar JSON, ayuda, feedback) o el menú lateral móvil.
+  3. *Ajuste del selector de salas en Resultados:* Ancho uniforme `100%` igual al botón de exportar, con opciones: `none` ("Ninguna sala"), `all` ("Todas las salas") y salas por orden cronológico.
+  4. *Contrastes y visibilidad en modo estudiante:* Homologar modos día y noche en `PlayView` y en las 6 actividades para evitar solapamientos y fondos que oculten texto.
+  5. *Alineación simétrica de botones:* En el modal de importación JSON y formularios móviles, colocar la acción de validación integrada y botones inferiores ordenados ergonómicamente.
+
+- **Fase 2: Rediseño del Creador de Sala y ciclo de vida simplificado:**
+  1. *Eliminar restricción de 3 tipos de actividad:* Permitir combinar de 1 a 6 formatos libremente.
+  2. *Ciclo de vida de sala directo:* Eliminar estados y botones de "Archivar" y "Duplicar". Permitir "Eliminar sala" real con confirmación (borrando la sala y sus intentos limpios).
+  3. *Conteo automático de preguntas en tiempo real:* Eliminar el campo numérico manual; el total de preguntas se calculará dinámicamente según las actividades marcadas en el banco (evitando repeticiones involuntarias).
+  4. *Formulario de configuración superior compacto:* 50% al 70% de la altura de pantalla con cuadrícula ordenada de 2 columnas (límite de alumnos, puntaje, tiempo, toggles de mezclar y volver atrás).
+  5. *Banco de preguntas visible y enriquecido:* Tarjetas con checkbox táctil, icono del formato, título del contenido, enunciado completo de la consigna y píldora del tipo de actividad.
+  6. *Marcas de hora y cronología:* Fechas en formato `DD/MM/YYYY · HH:mm` en creación, inicio y finalización de salas y contenidos.
+
+- **Fase 3: Respaldos pedagógicos y experiencia estudiantil:**
+  1. *Comprobante de entrega para el estudiante:* Botón `[↓ Descargar comprobante de entrega]` al finalizar, con sala, fecha/hora exacta, preguntas y respuestas que marcó (sin revelar notas ni soluciones).
+  2. *Examen en blanco descargable/imprimible para el docente:* Botón `[📄 Imprimir examen en blanco / PDF]` para contingencias de aula sin internet o sin dispositivos móviles.
+  3. *Barra de avance visual (Stepper):* Indicador visual de progreso en la evaluación del estudiante.
+  4. *Pantalla de espera relajante con Chispa Curiosa:* Animación y mensaje cálido de bienvenida mientras el profesor inicia la sala.
+  5. *Confirmación previa al finalizar:* Diálogo breve para evitar toques accidentales en la última pregunta si quedan preguntas sin responder.
+
+
+### Ejecución y despliegue público integral — Fases 1, 2 y 3 completadas — 2026-10-26
+
+- **Estado:** Implementado, verificado con 91/91 pruebas unitarias, compilado con Vite y desplegado a la versión pública oficial en GitHub Pages (`https://elmeryale99torrez-prog.github.io/EduEval/`).
+- **Implementaciones realizadas por fase:**
+  - **Fase 1 (Estabilidad crítica y navegación móvil):**
+    - Búsqueda directa en banco general (`activities.find`) en lugar del filtro restrictivo `published.find`, resolviendo de raíz el error de "No hay actividades publicadas" en el móvil cuando los formatos estaban aprobados.
+    - Bloqueo de scroll de fondo (`body-modal-locked`) sincronizado mediante `MutationObserver` y modales de React, garantizando que el scroll y arrastre de fondo no se disparen al usar modales de importación, ayuda, sugerencias o el menú móvil.
+    - Selector de salas en Resultados normalizado a ancho `100%`, ordenado cronológicamente con opciones `none` ("Ninguna sala"), `all` ("Todas las salas") y desactivación controlada del botón de exportación cuando no hay datos seleccionados.
+    - Homologación de contraste y legibilidad total en modo Día y modo Noche (`[data-theme="dark"]`) en las 6 actividades (Escenarios, Falso/Verdadero, Asociación, Clasificación, Ordenamiento y Selección Única) para que ningún texto se pierda por fondos oscuros o colores de selección.
+    - Alineación simétrica de la barra de acciones de importación JSON (`.import-action-bar` y `.import-bottom-actions`) con botones accesibles y orden ergonómico.
+  - **Fase 2 (Creador de sala directo y ciclo simplificado):**
+    - Eliminación de la restricción de 3 formatos máximos: el docente ahora puede combinar libremente de 1 a 6 actividades en una misma sala.
+    - Ciclo de vida directo y limpio: se removieron las opciones confusas de "Archivar" y "Duplicar". Se implementó la eliminación real y limpia de la sala tanto local como en Supabase (`deleteRoom`), cascada sobre intentos, participantes y asignaciones de actividades con diálogo de confirmación.
+    - Conteo dinámico de preguntas en tiempo real: el total de preguntas de la evaluación equivale exactamente a la cantidad de actividades marcadas en el banco (`activityIds.length`), eliminando duplicaciones forzadas y cálculos confusos.
+    - Formulario superior compacto en 2 columnas (`.room-builder-top-grid`) ocupando entre 50% y 65% del viewport, con límites, puntajes por pregunta, tiempo opcional y toggles claros.
+    - Banco de preguntas enriquecido (`.activity-check-list-enriched`): tarjetas táctiles amplias con checkbox, icono representativo de formato, nombre del contenido, consigna visible y etiqueta de tema.
+    - Formateo cronológico unificado: función `formatDateTime` que despliega marcas de tiempo legibles `DD/MM/YYYY · HH:mm` en salas, intentos y comprobantes.
+  - **Fase 3 (Respaldos pedagógicos y experiencia del estudiante):**
+    - Comprobante de entrega descargable (`.txt`): el estudiante puede descargar su constancia de entrega con código de sala, fecha/hora exacta, número de preguntas respondidas/omitidas y el resumen de lo entregado, sin revelar respuestas correctas ni calificaciones grupales (cumpliendo estrictamente el criterio pedagógico de privacidad de EduEval).
+    - Examen en blanco imprimible (`BlankExamModal`): herramienta de contingencia que genera una versión en papel con formato de evaluación formal, encabezado institucional, espacio para nombre/fecha/nota y las consignas de las actividades seleccionadas listas para imprimir o guardar en PDF (`window.print()`).
+    - Stepper visual interactivo (`.play-stepper`): barra superior en el reproductor del estudiante con nodos numerados que indican el progreso actual, actividades completadas y permiten navegación directa (si la sala permite volver atrás).
+    - Pantalla de espera interactiva y relajante: mascota Chispa Curiosa con animación de pulso y bienvenida personalizada al estudiante mientras espera que el docente active la evaluación.
+    - Confirmación previa al finalizar: si el estudiante pulsa finalizar en la última actividad y aún tiene preguntas sin responder u omitidas, se muestra un diálogo de confirmación claro para evitar entregas accidentales.
+- **PWA y actualización de clientes:**
+  - `public/sw.js` actualizado a la versión de caché `evaluedu-shell-v10`.
+  - `index.html` actualizado con parámetros de caché `?v=10` en manifiesto e iconos.
+  - Los clientes móviles que ya tenían instalada o abierta la PWA recibirán las mejoras de forma automática al recargar o abrir la aplicación con conexión a internet.
+- **Verificación técnica:**
+  - Pruebas unitarias: **91/91 pasadas con éxito (14 suites en verde)**.
+  - Compilación de producción con Vite (`tsc -b && vite build`): **Exitosa (código 0)**.
+
