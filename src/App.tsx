@@ -4497,17 +4497,30 @@ function generateExamHtmlDocument({
     .filter(Boolean) as Activity[]
 
   const isStudent = mode === 'student'
+  const printableActs = isStudent ? roomActs : roomActs.filter((a) => a.type !== 'scenario')
+  const excludedScenarios = !isStudent ? roomActs.filter((a) => a.type === 'scenario') : []
+
   const title = isStudent
     ? `Comprobante de Examen - ${room.code} - ${attempt?.studentName || 'Estudiante'}`
     : `Examen en Blanco - ${room.name} (${room.code})`
 
-  const questionsHtml = roomActs
-    .map((act, i) => {
-      const qNum = i + 1
-      const pts = room.scorePerQuestion
-      const formatLabel = types[act.type]?.label || act.type
-      const actTitle = act.title
-      const actPrompt = act.type === 'trueFalse' ? (act.details?.trueFalse?.statement || act.prompt) : act.prompt
+  const questionsHtml = printableActs.length === 0
+    ? `
+      <div style="text-align: center; padding: 48px 24px; background: #fffbeb; border: 1px dashed #f59e0b; border-radius: 10px; margin: 20px 0;">
+        <div style="font-size: 32px; margin-bottom: 10px;">📱</div>
+        <h3 style="color: #92400e; font-size: 17px; margin-bottom: 8px;">Sala configurada exclusivamente con Escenarios de Decisiones</h3>
+        <p style="color: #78350f; font-size: 13px; max-width: 520px; margin: 0 auto; line-height: 1.5;">
+          Los escenarios de decisiones son experiencias interactivas y secuenciales diseñadas para resolverse en pantalla con retroalimentación inmediata. Para generar una hoja de evaluación impresa en papel de contingencia, agrega a la sala preguntas de opción múltiple, falso/verdadero, asociación, clasificación u ordenamiento.
+        </p>
+      </div>
+    `
+    : printableActs
+        .map((act, i) => {
+          const qNum = i + 1
+          const pts = room.scorePerQuestion
+          const formatLabel = types[act.type]?.label || act.type
+          const actTitle = act.title
+          const actPrompt = act.type === 'trueFalse' ? (act.details?.trueFalse?.statement || act.prompt) : act.prompt
 
       const studentAnswer = attempt?.answers?.find((a) => a.activityId === act.id) || attempt?.answers?.[i]
       const wasOmitted = isStudent && (!studentAnswer || studentAnswer.status === 'omitted' || !studentAnswer.response)
@@ -4811,7 +4824,7 @@ function generateExamHtmlDocument({
     `
 
   const metaSubtitle = !isStudent
-    ? `Código de sala: <b>${escapeHtml(room.code)}</b> · Total preguntas: <b>${roomActs.length}</b> · Valor por pregunta: <b>${room.scorePerQuestion} pts</b> (${roomActs.length * room.scorePerQuestion} pts totales)`
+    ? `Código de sala: <b>${escapeHtml(room.code)}</b> · Total preguntas en papel: <b>${printableActs.length}</b> · Valor por pregunta: <b>${room.scorePerQuestion} pts</b> (${printableActs.length * room.scorePerQuestion} pts totales)${excludedScenarios.length > 0 ? ` · <span style="color:#b45309; font-weight:600;">(${excludedScenarios.length} actividad(es) interactiva(s) omitida(s) para papel)</span>` : ''}`
     : `Código de sala: <b>${escapeHtml(room.code)}</b> · Evaluación: <b>${escapeHtml(room.name)}</b> · Total preguntas: <b>${roomActs.length}</b>`
 
   const footerText = !isStudent
@@ -5328,6 +5341,13 @@ function ExamDocumentModal({
   onClose: () => void
 }) {
   const isStudent = mode === 'student'
+  const roomActs = room.activities
+    .map((id) => activities.find((a) => a.id === id))
+    .filter(Boolean) as Activity[]
+  const printableActs = isStudent ? roomActs : roomActs.filter((a) => a.type !== 'scenario')
+  const excludedScenarios = !isStudent ? roomActs.filter((a) => a.type === 'scenario') : []
+  const hasPrintableQuestions = printableActs.length > 0
+
   const htmlDoc = generateExamHtmlDocument({
     mode,
     room,
@@ -5341,10 +5361,12 @@ function ExamDocumentModal({
     : `examen-${room.code}.html`
 
   const handlePrint = () => {
+    if (!hasPrintableQuestions) return
     printExamDocument(htmlDoc)
   }
 
   const handleDownload = () => {
+    if (!hasPrintableQuestions) return
     downloadExamHtmlDocument(filename, htmlDoc)
   }
 
@@ -5366,6 +5388,32 @@ function ExamDocumentModal({
           </button>
         </div>
 
+        {/* Banner pedagógico informativo cuando se excluyen escenarios en papel */}
+        {!isStudent && excludedScenarios.length > 0 && (
+          <div className="exam-scenario-warning-banner no-print">
+            <span className="warning-banner-icon">💡</span>
+            <div className="warning-banner-copy">
+              <b>Aviso pedagógico sobre actividades interactivas:</b>
+              <p>
+                Esta sala incluye {excludedScenarios.length} actividad{excludedScenarios.length === 1 ? '' : 'es'} de tipo <i>Escenario de decisiones</i> ({excludedScenarios.map((s) => `«${s.title}»`).join(', ')}). Debido a que los escenarios requieren interactividad secuencial y retroalimentación inmediata, <b>se han omitido de esta versión impresa</b> para salvaguardar la validez de la evaluación. La prueba en papel se organizó automáticamente con las {printableActs.length} actividades restantes ({printableActs.length * room.scorePerQuestion} pts totales).
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Alerta si la sala solo contenía escenarios */}
+        {!isStudent && !hasPrintableQuestions && (
+          <div className="exam-scenario-warning-banner error no-print">
+            <span className="warning-banner-icon">⚠️</span>
+            <div className="warning-banner-copy">
+              <b>Sala sin preguntas imprimibles en papel:</b>
+              <p>
+                Esta sala contiene exclusivamente escenarios interactivos para pantalla. Para habilitar la descarga o impresión en papel, agrega al menos una actividad de selección única, falso/verdadero, asociación, clasificación u ordenamiento.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="exam-preview-frame-wrap">
           <iframe
             title="Vista previa de examen"
@@ -5382,7 +5430,8 @@ function ExamDocumentModal({
             type="button"
             className="outline-button"
             onClick={handleDownload}
-            title="Descargar archivo HTML autónomo para abrir en cualquier dispositivo"
+            disabled={!hasPrintableQuestions}
+            title={hasPrintableQuestions ? 'Descargar archivo HTML autónomo para abrir en cualquier dispositivo' : 'No hay preguntas imprimibles'}
           >
             📥 Descargar archivo (.html)
           </button>
@@ -5390,7 +5439,8 @@ function ExamDocumentModal({
             type="button"
             className="primary-button"
             onClick={handlePrint}
-            title="Imprimir directamente o guardar en PDF"
+            disabled={!hasPrintableQuestions}
+            title={hasPrintableQuestions ? 'Imprimir directamente o guardar en PDF' : 'No hay preguntas imprimibles'}
           >
             🖨 Imprimir o Guardar PDF
           </button>
@@ -5816,6 +5866,14 @@ function RoomBuilder({
                         {types[activity.type].label}
                       </span>
                       {activity.topic && <span className="activity-check-topic">{activity.topic}</span>}
+                      {activity.type === 'scenario' && (
+                        <span
+                          className="activity-digital-only-pill"
+                          title="Formato interactivo secuencial para dispositivos. Se omite automáticamente en la hoja en blanco impresa."
+                        >
+                          📱 Digital interactivo
+                        </span>
+                      )}
                     </div>
                     <div className="activity-check-body">
                       <h4 className="activity-check-title">{activity.title}</h4>

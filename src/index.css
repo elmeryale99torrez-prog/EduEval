@@ -4175,6 +4175,80 @@ body.body-modal-locked {
   background: #ffffff;
 }
 
+/* Aviso pedagógico sobre actividades interactivas */
+.exam-scenario-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.exam-scenario-warning-banner.error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  border-left-color: #ef4444;
+}
+.warning-banner-icon {
+  font-size: 18px;
+  line-height: 1.2;
+}
+.warning-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #78350f;
+}
+.exam-scenario-warning-banner.error .warning-banner-copy {
+  color: #991b1b;
+}
+.warning-banner-copy b {
+  font-size: 13px;
+}
+.warning-banner-copy p {
+  margin: 0;
+}
+
+/* Píldora de formato digital interactivo en creador de sala */
+.activity-digital-only-pill {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+}
+
+[data-theme="dark"] .exam-scenario-warning-banner {
+  background: #2a2012;
+  border-color: #5c4314;
+  border-left-color: #f59e0b;
+}
+[data-theme="dark"] .exam-scenario-warning-banner.error {
+  background: #2d1515;
+  border-color: #632020;
+  border-left-color: #ef4444;
+}
+[data-theme="dark"] .warning-banner-copy {
+  color: #fde68a;
+}
+[data-theme="dark"] .exam-scenario-warning-banner.error .warning-banner-copy {
+  color: #fecaca;
+}
+[data-theme="dark"] .activity-digital-only-pill {
+  background: #362a15;
+  border-color: #6a4f1a;
+  color: #f4c264;
+}
+
 @media print {
   @page {
     margin: 1.2cm;

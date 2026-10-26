@@ -810,7 +810,7 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
 
 ### Corrección crítica de impresión sin hojas en blanco y homologación del comprobante de estudiante — 2026-10-26
 
-- **Estado:** Implementado, verificado con 91/91 pruebas y compilación Vite, y desplegado a la versión pública en GitHub Pages (`https://elmeryale99torrez-prog.github.io/EduEval/`).
+- **Estado:** Implementado, verificado con 91/91 pruebas y compilación Vite, y desplegado a la versión pública en GitHub Pages (`https://elmeryale99torrez-prog.github.io/EvaluEdu/`).
 - **Problema resuelto 1 (Hojas en blanco al imprimir o guardar en PDF):**
   - Al pulsar "Imprimir o Guardar PDF", el navegador renderizaba hojas en blanco debido a la interferencia de `body.body-modal-locked` (`overflow: hidden; touch-action: none;`), modales anidados con `position: fixed` y la regla `@media print { body * { visibility: hidden; } }`.
   - Se implementó un generador de documentos HTML autónomo (`generateExamHtmlDocument`) con CSS A4 profesional embebido y una función de impresión directa mediante inyección en `iframe` aislado (`printExamDocument`). Al imprimir desde el iframe, el documento es 100% puro y no depende del DOM de la aplicación ni de modales bloqueados, garantizando que el PDF y la impresión en papel salgan completos, nítidos y sin páginas en blanco.
@@ -828,5 +828,24 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
 - **Verificación técnica:**
   - Pruebas unitarias: **91/91 aprobadas (14 suites en verde)**.
   - Compilación de producción con Vite: **Limpia (código 0)**.
+
+
+### Exclusión pedagógica de escenarios de decisiones en examen impreso en papel — 2026-10-26
+
+- **Estado:** Implementado, verificado con 91/91 pruebas unitarias y compilación de producción con Vite, y desplegado a la versión pública en GitHub Pages (`https://elmeryale99torrez-prog.github.io/EvaluEdu/`).
+- **Criterio pedagógico implementado:**
+  - Los *Escenarios de decisiones* son actividades eminentemente interactivas y secuenciales diseñadas para resolverse en pantalla con retroalimentación inmediata. En una hoja impresa en papel estática pierden su validez porque el estudiante ve todas las etapas por adelantado (anticipando respuestas) y no existe feedback dinámico.
+  - Se excluyeron automáticamente las actividades de tipo `scenario` de la versión de examen en blanco impreso para el docente (`generateExamHtmlDocument` con `mode="blank"`).
+  - El examen en papel se reorganiza y renumera automáticamente (1..N) con las actividades aptas restantes, recalculando el conteo de preguntas y el puntaje total correspondiente.
+  - En el modal de impresión del docente (`ExamDocumentModal`), se despliega un banner pedagógico destacado (`.exam-scenario-warning-banner`) que informa al docente de forma transparente qué actividad interactiva fue omitida y cuántas preguntas componen su versión en papel.
+  - Protección ante salas con solo escenarios: si una sala estuviera compuesta exclusivamente por escenarios de decisiones, el sistema muestra una advertencia pedagógica guiada y deshabilita la descarga/impresión hasta que se agregue al menos un formato imprimible.
+  - Distintivo visual en Creador de Sala: en el banco de actividades (`RoomBuilder`), las actividades de escenario ahora lucen la píldora informativa `[📱 Digital interactivo]`.
+  - El comprobante del estudiante en digital continúa conservando todas las evidencias y decisiones que tomó en la app.
+- **PWA y caché:**
+  - Service Worker actualizado a `evaluedu-shell-v12` en `public/sw.js` e `index.html` con `?v=12`.
+- **Verificación técnica:**
+  - Pruebas unitarias: **91/91 pasadas con éxito (14 suites en verde)**.
+  - Compilación de producción con Vite (`tsc -b && vite build`): **Exitosa (código 0)**.
+
 
 
