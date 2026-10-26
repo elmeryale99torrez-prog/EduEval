@@ -807,3 +807,26 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
   - Pruebas unitarias: **91/91 pasadas con éxito (14 suites en verde)**.
   - Compilación de producción con Vite (`tsc -b && vite build`): **Exitosa (código 0)**.
 
+
+### Corrección crítica de impresión sin hojas en blanco y homologación del comprobante de estudiante — 2026-10-26
+
+- **Estado:** Implementado, verificado con 91/91 pruebas y compilación Vite, y desplegado a la versión pública en GitHub Pages (`https://elmeryale99torrez-prog.github.io/EduEval/`).
+- **Problema resuelto 1 (Hojas en blanco al imprimir o guardar en PDF):**
+  - Al pulsar "Imprimir o Guardar PDF", el navegador renderizaba hojas en blanco debido a la interferencia de `body.body-modal-locked` (`overflow: hidden; touch-action: none;`), modales anidados con `position: fixed` y la regla `@media print { body * { visibility: hidden; } }`.
+  - Se implementó un generador de documentos HTML autónomo (`generateExamHtmlDocument`) con CSS A4 profesional embebido y una función de impresión directa mediante inyección en `iframe` aislado (`printExamDocument`). Al imprimir desde el iframe, el documento es 100% puro y no depende del DOM de la aplicación ni de modales bloqueados, garantizando que el PDF y la impresión en papel salgan completos, nítidos y sin páginas en blanco.
+  - Además, se incorporó el botón **`[📥 Descargar archivo (.html)]`** que descarga el examen formal como archivo autónomo listo para abrir e imprimir en cualquier dispositivo.
+- **Problema resuelto 2 (Homologación del comprobante del estudiante):**
+  - Anteriormente el estudiante solo descargaba un archivo de texto plano `.txt` rígido y técnico, muy distante de la presentación visual del examen del docente.
+  - Se unificó la arquitectura con el componente `ExamDocumentModal`: tanto el docente como el estudiante reciben la misma presentación formal de examen institucional de EvaluEdu.
+  - **Función respectiva para el estudiante:** En lugar de casillas vacías para responder a lápiz, el comprobante del estudiante muestra cada pregunta con su título, consigna y la **respuesta que efectivamente entregó el estudiante** claramente resaltada (opción elegida, pares asociados, pasos ordenados, categorías clasificadas o decisiones de escenario), o la indicación de omisión si no fue respondida, concluyendo con la nota de custodia docente y confidencialidad pedagógica.
+  - El estudiante dispone ahora en su pantalla final de:
+    1. **`[📄 Ver e Imprimir Comprobante Oficial]`**: Previsualización exacta en modal y botón para imprimir o guardar en PDF sin hojas en blanco.
+    2. **`[📥 Descargar Comprobante (.html)]`**: Descarga directa del documento de examen formal completado.
+    3. **`[Descargar respaldo ligero (.txt)]`**: Opción secundaria de texto plano.
+- **PWA y caché:**
+  - Service Worker actualizado a `evaluedu-shell-v11` en `public/sw.js` e `index.html` con `?v=11`.
+- **Verificación técnica:**
+  - Pruebas unitarias: **91/91 aprobadas (14 suites en verde)**.
+  - Compilación de producción con Vite: **Limpia (código 0)**.
+
+

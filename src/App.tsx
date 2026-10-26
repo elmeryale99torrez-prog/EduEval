@@ -1486,7 +1486,7 @@ function App() {
     {role !== 'student' && mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavOpen(false)} />}
     <div className="layout">
       {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu · v1.2</small></div></aside>}
-      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} responsesRecorded={studentResponses} onGoToQuestion={goToStudentQuestion} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
+      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} activities={activities} studentResponses={studentResponses} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} activities={activities} studentResponses={studentResponses} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} responsesRecorded={studentResponses} onGoToQuestion={goToStudentQuestion} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
     </div>{toast && <div className="toast" role="status">✓ {toast}</div>}
     {showPasswordChange && authSession && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} onSaved={() => { setShowPasswordChange(false); notify('Contraseña actualizada correctamente.') }} />}
     {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
@@ -4470,166 +4470,938 @@ function RoomContentPicker({
   )
 }
 
-function BlankExamModal({ room, activities, onClose }: { room: Room; activities: Activity[]; onClose: () => void }) {
-  const roomActs = room.activities.map((id) => activities.find((a) => a.id === id)).filter(Boolean) as Activity[]
+function escapeHtml(text: string): string {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function generateExamHtmlDocument({
+  mode,
+  room,
+  activities,
+  attempt,
+  studentResponses,
+}: {
+  mode: 'blank' | 'student'
+  room: Room
+  activities: Activity[]
+  attempt?: StudentAttempt | null
+  studentResponses?: Record<number, ActivityResponse>
+}): string {
+  const roomActs = room.activities
+    .map((id) => activities.find((a) => a.id === id))
+    .filter(Boolean) as Activity[]
+
+  const isStudent = mode === 'student'
+  const title = isStudent
+    ? `Comprobante de Examen - ${room.code} - ${attempt?.studentName || 'Estudiante'}`
+    : `Examen en Blanco - ${room.name} (${room.code})`
+
+  const questionsHtml = roomActs
+    .map((act, i) => {
+      const qNum = i + 1
+      const pts = room.scorePerQuestion
+      const formatLabel = types[act.type]?.label || act.type
+      const actTitle = act.title
+      const actPrompt = act.type === 'trueFalse' ? (act.details?.trueFalse?.statement || act.prompt) : act.prompt
+
+      const studentAnswer = attempt?.answers?.find((a) => a.activityId === act.id) || attempt?.answers?.[i]
+      const wasOmitted = isStudent && (!studentAnswer || studentAnswer.status === 'omitted' || !studentAnswer.response)
+      const rawResponse = studentAnswer?.response || ''
+      const structuredResp = studentResponses ? studentResponses[i] : undefined
+
+      let answerBodyHtml = ''
+
+      if (isStudent && wasOmitted) {
+        answerBodyHtml = `
+          <div class="answer-omitted-badge">
+            ⚠ Pregunta omitida por el estudiante (sin respuesta registrada)
+          </div>
+        `
+      } else if (act.type === 'trueFalse') {
+        if (!isStudent) {
+          answerBodyHtml = `
+            <div class="choice-row" style="margin-top: 8px;">
+              <span class="exam-check-box">( &nbsp; ) Verdadero</span>
+              <span class="exam-check-box">( &nbsp; ) Falso</span>
+            </div>
+          `
+        } else {
+          const val = structuredResp && structuredResp.type === 'trueFalse' ? structuredResp.value : rawResponse
+          const isTrue = val.toLowerCase().includes('verdadero')
+          const isFalse = val.toLowerCase().includes('falso')
+          answerBodyHtml = `
+            <div class="answer-badge-student">
+              ✓ Respuesta entregada: <b>${escapeHtml(isTrue ? 'Verdadero' : isFalse ? 'Falso' : val)}</b>
+            </div>
+            <div class="choice-row ${isTrue ? 'choice-selected' : ''}">
+              <span class="choice-check">${isTrue ? '●' : '○'}</span>
+              <b>Verdadero</b> ${isTrue ? '<span class="selected-tag">← (Elegida por el estudiante)</span>' : ''}
+            </div>
+            <div class="choice-row ${isFalse ? 'choice-selected' : ''}">
+              <span class="choice-check">${isFalse ? '●' : '○'}</span>
+              <b>Falso</b> ${isFalse ? '<span class="selected-tag">← (Elegida por el estudiante)</span>' : ''}
+            </div>
+          `
+        }
+      } else if (act.type === 'singleChoice') {
+        const options = (act.details?.singleChoice?.options || act.options || [])
+        const selectedVal = structuredResp && structuredResp.type === 'singleChoice' ? structuredResp.value : rawResponse
+        if (!isStudent) {
+          answerBodyHtml = options
+            .map((opt, idx) => {
+              const label = typeof opt === 'string' ? opt : opt.label
+              const letter = String.fromCharCode(65 + idx)
+              return `
+                <div class="choice-row">
+                  <span class="choice-letter">(${letter})</span>
+                  <span>${escapeHtml(label)}</span>
+                </div>
+              `
+            })
+            .join('')
+        } else {
+          answerBodyHtml = options
+            .map((opt, idx) => {
+              const label = typeof opt === 'string' ? opt : opt.label
+              const letter = String.fromCharCode(65 + idx)
+              const isSelected = selectedVal === label || (typeof opt !== 'string' && selectedVal === opt.id)
+              return `
+                <div class="choice-row ${isSelected ? 'choice-selected' : ''}">
+                  <span class="choice-letter">(${letter})</span>
+                  <span>${escapeHtml(label)}</span>
+                  ${isSelected ? '<span class="selected-tag">← [Respuesta entregada por el estudiante]</span>' : ''}
+                </div>
+              `
+            })
+            .join('')
+        }
+      } else if (act.type === 'matching') {
+        const pairs = act.details?.matching?.pairs || []
+        if (!isStudent) {
+          const rightShuffled = scrambleRightOptions(pairs.map((p) => p.right))
+          answerBodyHtml = `
+            <div class="grid-2-cols" style="margin-top: 8px;">
+              <div>
+                <b>Columna A (Conceptos):</b>
+                ${pairs.map((p, idx) => `<div class="match-item">${idx + 1}. ${escapeHtml(p.left)}</div>`).join('')}
+              </div>
+              <div>
+                <b>Columna B (Relaciones / Definiciones):</b>
+                ${rightShuffled.map((opt) => `<div class="match-item">[ &nbsp;&nbsp; ] ${escapeHtml(opt)}</div>`).join('')}
+              </div>
+            </div>
+          `
+        } else {
+          let matchedList: { left: string; right: string }[] = []
+          if (structuredResp && structuredResp.type === 'matching') {
+            matchedList = Object.entries(structuredResp.pairs).map(([left, right]) => ({ left, right }))
+          } else {
+            const tokens = rawResponse.split('|').map((t) => t.trim()).filter(Boolean)
+            matchedList = tokens.map((t) => {
+              const parts = t.split('→').map((p) => p.trim())
+              return { left: parts[0] || '', right: parts[1] || '' }
+            })
+          }
+          if (!matchedList.length) {
+            matchedList = pairs.map((p) => ({ left: p.left, right: rawResponse }))
+          }
+          answerBodyHtml = `
+            <div class="answer-badge-student">✓ Asociaciones registradas por el estudiante:</div>
+            <table class="matching-table">
+              <thead>
+                <tr>
+                  <th style="width: 45%;">Concepto (Columna A)</th>
+                  <th style="width: 55%;">Relación entregada por el estudiante</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${matchedList.map((p, idx) => `
+                  <tr>
+                    <td><b>${idx + 1}. ${escapeHtml(p.left)}</b></td>
+                    <td class="choice-selected">➔ ${escapeHtml(p.right || '(Sin asociar)')}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `
+        }
+      } else if (act.type === 'sorting') {
+        const items = act.details?.sorting?.items || []
+        const categories = act.details?.sorting?.categories || []
+        if (!isStudent) {
+          answerBodyHtml = `
+            <p class="exam-subtext"><b>Elementos para clasificar:</b> ${items.map((i) => escapeHtml(i.label)).join(' · ')}</p>
+            <div class="sorting-grid">
+              ${categories.map((cat) => `
+                <div class="sorting-col">
+                  <div class="sorting-col-title">${escapeHtml(cat)}</div>
+                  <div class="sort-lines"><span/><span/><span/></div>
+                </div>
+              `).join('')}
+            </div>
+          `
+        } else {
+          const assignedMap: Record<string, string[]> = {}
+          categories.forEach((cat) => { assignedMap[cat] = [] })
+          if (structuredResp && structuredResp.type === 'sorting') {
+            Object.entries(structuredResp.assignments).forEach(([itemId, cat]) => {
+              const itemObj = items.find((i) => i.id === itemId || i.label === itemId)
+              const label = itemObj?.label || itemId
+              if (assignedMap[cat]) assignedMap[cat].push(label)
+              else assignedMap[cat] = [label]
+            })
+          } else {
+            const tokens = rawResponse.split('|').map((t) => t.trim()).filter(Boolean)
+            tokens.forEach((t) => {
+              const parts = t.split('→').map((p) => p.trim())
+              if (parts.length === 2 && assignedMap[parts[1]]) {
+                assignedMap[parts[1]].push(parts[0])
+              }
+            })
+          }
+          answerBodyHtml = `
+            <div class="answer-badge-student">✓ Clasificación entregada por el estudiante:</div>
+            <div class="sorting-grid">
+              ${categories.map((cat) => `
+                <div class="sorting-col">
+                  <div class="sorting-col-title">${escapeHtml(cat)}</div>
+                  ${(assignedMap[cat] && assignedMap[cat].length)
+                    ? assignedMap[cat].map((elem) => `<div class="classified-chip choice-selected">• ${escapeHtml(elem)}</div>`).join('')
+                    : '<small style="color:#94a3b8; font-style:italic;">(Ningún elemento asignado)</small>'}
+                </div>
+              `).join('')}
+            </div>
+          `
+        }
+      } else if (act.type === 'ordering') {
+        const steps = act.details?.ordering?.steps || []
+        if (!isStudent) {
+          const scrambled = scrambleOrderingSteps(steps)
+          answerBodyHtml = `
+            <p class="exam-subtext">Numera del 1 al ${steps.length} los pasos en orden cronológico o procesal:</p>
+            ${scrambled.map((step) => `
+              <div class="order-row">
+                <span class="order-num-box">[ &nbsp;&nbsp; ]</span>
+                <span>${escapeHtml(step)}</span>
+              </div>
+            `).join('')}
+          `
+        } else {
+          let studentSteps: string[] = []
+          if (structuredResp && structuredResp.type === 'ordering') {
+            studentSteps = structuredResp.order
+          } else {
+            studentSteps = rawResponse.split('→').map((s) => s.trim()).filter(Boolean)
+          }
+          if (!studentSteps.length) studentSteps = steps
+          answerBodyHtml = `
+            <div class="answer-badge-student">✓ Secuencia procesal entregada por el estudiante:</div>
+            <div class="order-list-student">
+              ${studentSteps.map((step, idx) => `
+                <div class="order-row choice-selected">
+                  <span class="order-num-badge">Paso ${idx + 1}</span>
+                  <span>${escapeHtml(step)}</span>
+                </div>
+              `).join('')}
+            </div>
+          `
+        }
+      } else if (act.type === 'scenario') {
+        const situation = act.details?.scenario?.situation || ''
+        const stages = act.details?.scenario?.stages || []
+        if (!isStudent) {
+          answerBodyHtml = `
+            ${situation ? `<div class="situation-box"><b>Contexto del dilema:</b> ${escapeHtml(situation)}</div>` : ''}
+            ${stages.map((stg, stgIdx) => `
+              <div class="scenario-stage-box">
+                <b>Etapa ${stgIdx + 1}: ${escapeHtml(stg.prompt)}</b>
+                ${stg.options.map((opt, optIdx) => `
+                  <div class="choice-row">
+                    <span class="choice-letter">(${String.fromCharCode(65 + optIdx)})</span>
+                    <span>${escapeHtml(opt.text)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            `).join('')}
+          `
+        } else {
+          const stageChoices = rawResponse.split('|').map((t) => t.trim()).filter(Boolean)
+          answerBodyHtml = `
+            ${situation ? `<div class="situation-box"><b>Contexto del dilema:</b> ${escapeHtml(situation)}</div>` : ''}
+            <div class="answer-badge-student">✓ Decisiones tomadas por el estudiante:</div>
+            ${stages.map((stg, stgIdx) => {
+              let choiceText = ''
+              if (structuredResp && structuredResp.type === 'scenario') {
+                const choiceId = structuredResp.choices[stg.id]
+                const opt = stg.options.find((o) => o.id === choiceId || o.text === choiceId)
+                choiceText = opt?.text || choiceId || ''
+              } else {
+                const studentChoice = stageChoices.find((c) => c.startsWith(`Etapa ${stgIdx + 1}:`)) || stageChoices[stgIdx] || ''
+                choiceText = studentChoice.includes(':') ? studentChoice.split(':')[1]?.trim() : studentChoice
+              }
+              return `
+                <div class="scenario-stage-box">
+                  <b>Etapa ${stgIdx + 1}: ${escapeHtml(stg.prompt)}</b>
+                  <div class="choice-row choice-selected" style="margin-top: 6px;">
+                    ➔ <span>${escapeHtml(choiceText || '(Sin decisión registrada)')}</span>
+                  </div>
+                </div>
+              `
+            }).join('')}
+          `
+        }
+      }
+
+      return `
+        <article class="question-card">
+          <div class="q-top">
+            <div class="q-badge">
+              <span class="q-num">Pregunta ${qNum}</span>
+              <span class="q-type">${escapeHtml(formatLabel)}</span>
+            </div>
+            <span class="q-score">[${pts} pts]</span>
+          </div>
+          <h3 class="q-title">${escapeHtml(actTitle)}</h3>
+          <p class="q-prompt">${escapeHtml(actPrompt)}</p>
+          <div class="answer-block">
+            ${answerBodyHtml}
+          </div>
+        </article>
+      `
+    })
+    .join('')
+
+  const fieldsBlock = !isStudent
+    ? `
+      <div class="fields-grid">
+        <div class="field-row">
+          <span class="field-label">Estudiante:</span>
+          <span class="field-line"></span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Fecha:</span>
+          <span class="field-line" style="max-width: 180px;"></span>
+          <span class="field-label" style="min-width: 60px; margin-left: 16px;">Puntaje:</span>
+          <span class="field-line" style="max-width: 140px;"></span>
+        </div>
+      </div>
+    `
+    : `
+      <div class="fields-grid">
+        <div class="field-row">
+          <span class="field-label">Estudiante:</span>
+          <span class="field-val" style="font-size: 14px; color: #165c4d;">${escapeHtml(attempt?.studentName || '')}</span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Entrega:</span>
+          <span class="field-val">${formatDateTime(attempt?.finishedAt || new Date().toISOString())}</span>
+          <span class="field-label" style="min-width: 70px; margin-left: 16px;">Estado:</span>
+          <span class="field-val">${attempt?.status === 'timeout' ? 'Tiempo completado' : 'Finalizada y entregada'}</span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Resumen:</span>
+          <span class="field-val"><b>${attempt?.answeredCount || 0}</b> respondidas · <b>${attempt?.omittedCount || 0}</b> omitidas (${attempt?.totalQuestions || roomActs.length} preguntas en total)</span>
+        </div>
+      </div>
+    `
+
+  const metaSubtitle = !isStudent
+    ? `Código de sala: <b>${escapeHtml(room.code)}</b> · Total preguntas: <b>${roomActs.length}</b> · Valor por pregunta: <b>${room.scorePerQuestion} pts</b> (${roomActs.length * room.scorePerQuestion} pts totales)`
+    : `Código de sala: <b>${escapeHtml(room.code)}</b> · Evaluación: <b>${escapeHtml(room.name)}</b> · Total preguntas: <b>${roomActs.length}</b>`
+
+  const footerText = !isStudent
+    ? `EvaluEdu · Hoja de evaluación formal para el aula · Aprendizaje activo`
+    : `EvaluEdu · Comprobante oficial de evaluación entregada · Tus respuestas han sido registradas y almacenadas de forma segura bajo custodia docente.`
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page {
+      margin: 1.2cm;
+      size: A4 portrait;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      background: #f8fafc;
+      line-height: 1.5;
+      padding: 24px;
+    }
+    .doc-container {
+      max-width: 820px;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 32px 36px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    }
+    .doc-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      max-width: 820px;
+      margin: 0 auto 16px auto;
+    }
+    .btn-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .btn-print {
+      background: #165c4d;
+      color: #ffffff;
+    }
+    .btn-print:hover {
+      background: #12493d;
+    }
+    .btn-close {
+      background: #ffffff;
+      color: #475569;
+      border-color: #cbd5e1;
+    }
+    .btn-close:hover {
+      background: #f1f5f9;
+    }
+    .exam-header {
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+    }
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .brand-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      background: #165c4d;
+      color: #ffffff;
+      border-radius: 6px;
+      font-weight: 800;
+      font-size: 15px;
+    }
+    .brand-text {
+      font-size: 15px;
+      font-weight: 800;
+      color: #165c4d;
+      letter-spacing: -0.01em;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: #64748b;
+      margin-left: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .exam-title {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 8px 0 4px;
+    }
+    .exam-meta-line {
+      font-size: 12.5px;
+      color: #475569;
+      margin-bottom: 12px;
+    }
+    .fields-grid {
+      display: grid;
+      gap: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .field-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+    }
+    .field-label {
+      font-weight: 700;
+      color: #334155;
+      min-width: 90px;
+    }
+    .field-val {
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .field-line {
+      flex: 1;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+    .instructions-box {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: #f1f5f9;
+      border-left: 4px solid #165c4d;
+      border-radius: 4px;
+      font-size: 12.5px;
+      color: #334155;
+    }
+    .questions-container {
+      display: grid;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    .question-card {
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 16px 18px;
+      background: #ffffff;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .q-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .q-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .q-num {
+      background: #165c4d;
+      color: #ffffff;
+      padding: 3px 8px;
+      border-radius: 5px;
+    }
+    .q-type {
+      background: #f1f5f9;
+      color: #475569;
+      padding: 3px 8px;
+      border-radius: 5px;
+    }
+    .q-score {
+      font-size: 12px;
+      font-weight: 700;
+      color: #b45309;
+    }
+    .q-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+    .q-prompt {
+      font-size: 13px;
+      color: #334155;
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+    .answer-block {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed #e2e8f0;
+    }
+    .answer-badge-student {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #ecfdf5;
+      border: 1px solid #6ee7b7;
+      color: #065f46;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .answer-omitted-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .choice-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .choice-check {
+      font-weight: 700;
+      color: #165c4d;
+      min-width: 18px;
+    }
+    .choice-letter {
+      font-weight: 700;
+      color: #165c4d;
+      min-width: 22px;
+    }
+    .choice-selected {
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      font-weight: 600;
+      color: #14532d;
+    }
+    .selected-tag {
+      font-size: 11px;
+      color: #15803d;
+      font-weight: 700;
+      margin-left: auto;
+    }
+    .exam-check-box {
+      padding: 6px 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #f8fafc;
+      font-weight: 600;
+      font-size: 13px;
+      display: inline-block;
+      margin-right: 12px;
+    }
+    .grid-2-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      font-size: 12.5px;
+    }
+    .match-item {
+      padding: 6px 0;
+      border-bottom: 1px dotted #cbd5e1;
+    }
+    .matching-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      margin-top: 6px;
+    }
+    .matching-table th, .matching-table td {
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      text-align: left;
+    }
+    .matching-table th {
+      background: #f8fafc;
+      font-weight: 700;
+      color: #334155;
+    }
+    .sorting-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .sorting-col {
+      border: 1px dashed #94a3b8;
+      border-radius: 8px;
+      padding: 10px;
+      background: #f8fafc;
+      min-height: 90px;
+    }
+    .sorting-col-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #165c4d;
+      margin-bottom: 6px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .sort-lines span {
+      display: block;
+      height: 1px;
+      border-bottom: 1px dotted #cbd5e1;
+      margin: 16px 0;
+    }
+    .classified-chip {
+      font-size: 12px;
+      color: #0f172a;
+      padding: 3px 0;
+    }
+    .order-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      margin-bottom: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+    }
+    .order-num-box {
+      font-family: monospace;
+      font-weight: 700;
+      color: #475569;
+    }
+    .order-num-badge {
+      background: #165c4d;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+    .situation-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 12.5px;
+    }
+    .scenario-stage-box {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #f8fafc;
+      border-radius: 6px;
+      font-size: 12.5px;
+    }
+    .exam-subtext {
+      font-size: 12.5px;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+    .doc-footer {
+      margin-top: 32px;
+      padding-top: 14px;
+      border-top: 1px solid #cbd5e1;
+      font-size: 11px;
+      color: #64748b;
+      text-align: center;
+      line-height: 1.5;
+    }
+    @media print {
+      body {
+        padding: 0 !important;
+        background: #ffffff !important;
+      }
+      .doc-container {
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        max-width: 100% !important;
+      }
+      .doc-actions, .no-print {
+        display: none !important;
+      }
+      .question-card {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        border: 1px solid #cbd5e1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="doc-actions no-print">
+    <button type="button" class="btn-action btn-close" onclick="window.close()">✕ Cerrar</button>
+    <button type="button" class="btn-action btn-print" onclick="window.print()">🖨 Imprimir o Guardar PDF</button>
+  </div>
+  <div class="doc-container">
+    <header class="exam-header">
+      <div class="brand-badge">
+        <span class="brand-logo">E</span>
+        <span class="brand-text">EvaluEdu</span>
+        <span class="brand-sub">${isStudent ? 'Comprobante oficial de entrega' : 'Evaluación de aprendizaje activo'}</span>
+      </div>
+      <h1 class="exam-title">${escapeHtml(room.name)}</h1>
+      <div class="exam-meta-line">${metaSubtitle}</div>
+      ${fieldsBlock}
+      ${room.instructions ? `<div class="instructions-box"><b>Instrucciones:</b> ${escapeHtml(room.instructions)}</div>` : ''}
+    </header>
+
+    <main class="questions-container">
+      ${questionsHtml}
+    </main>
+
+    <footer class="doc-footer">
+      ${escapeHtml(footerText)}
+    </footer>
+  </div>
+</body>
+</html>`
+}
+
+function printExamDocument(html: string) {
+  try {
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument
+    if (doc) {
+      doc.open()
+      doc.write(html)
+      doc.close()
+      setTimeout(() => {
+        iframe.contentWindow?.focus()
+        iframe.contentWindow?.print()
+        setTimeout(() => {
+          try {
+            document.body.removeChild(iframe)
+          } catch (_) {}
+        }, 1200)
+      }, 350)
+      return
+    }
+  } catch (err) {
+    console.warn('Iframe print falló:', err)
+  }
+
+  const win = window.open('', '_blank')
+  if (win) {
+    win.document.open()
+    win.document.write(html)
+    win.document.close()
+    setTimeout(() => {
+      win.focus()
+      win.print()
+    }, 400)
+    return
+  }
+
+  window.print()
+}
+
+function downloadExamHtmlDocument(filename: string, html: string) {
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+function ExamDocumentModal({
+  mode,
+  room,
+  activities,
+  attempt,
+  studentResponses,
+  onClose,
+}: {
+  mode: 'blank' | 'student'
+  room: Room
+  activities: Activity[]
+  attempt?: StudentAttempt | null
+  studentResponses?: Record<number, ActivityResponse>
+  onClose: () => void
+}) {
+  const isStudent = mode === 'student'
+  const htmlDoc = generateExamHtmlDocument({
+    mode,
+    room,
+    activities,
+    attempt,
+    studentResponses,
+  })
+
+  const filename = isStudent
+    ? `comprobante-${room.code}-${(attempt?.studentName || 'estudiante').trim().replace(/\s+/g, '_')}.html`
+    : `examen-${room.code}.html`
+
+  const handlePrint = () => {
+    printExamDocument(htmlDoc)
+  }
+
+  const handleDownload = () => {
+    downloadExamHtmlDocument(filename, htmlDoc)
+  }
 
   return (
-    <div className="modal-backdrop">
+    <div className="modal-backdrop print-active-backdrop">
       <div className="modal-card blank-exam-modal printable-template">
         <div className="modal-head no-print">
           <div>
-            <p className="eyebrow">RESPALDO IMPRESO / CONTINGENCIA</p>
-            <h2>Examen en blanco para el aula</h2>
-            <p className="modal-subtitle">Hoja de evaluación lista para fotocopiar o responder en papel si no hay internet.</p>
+            <p className="eyebrow">{isStudent ? 'COMPROBANTE DE EVALUACIÓN' : 'RESPALDO IMPRESO / CONTINGENCIA'}</p>
+            <h2>{isStudent ? 'Comprobante oficial de examen entregado' : 'Examen en blanco para el aula'}</h2>
+            <p className="modal-subtitle">
+              {isStudent
+                ? 'Documento oficial con tus respuestas registradas, listo para imprimir o guardar en PDF.'
+                : 'Hoja de evaluación lista para fotocopiar o responder en papel si no hay internet o computadoras.'}
+            </p>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Cerrar">×</button>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Cerrar">
+            ×
+          </button>
         </div>
 
-        <div className="exam-print-body">
-          <div className="exam-print-header">
-            <div className="exam-print-institution">
-              <strong>EvaluEdu</strong>
-              <small>Evaluación de aprendizaje activo</small>
-            </div>
-            <div className="exam-print-title">
-              <h2>{room.name}</h2>
-              <p>Código: <b>{room.code}</b> · Total preguntas: <b>{roomActs.length}</b> · Valor por pregunta: <b>{room.scorePerQuestion} pts</b> ({roomActs.length * room.scorePerQuestion} pts totales)</p>
-            </div>
-            <div className="exam-student-fields">
-              <div className="exam-field-line">
-                <span>Estudiante:</span>
-                <span className="exam-line" />
-              </div>
-              <div className="exam-field-line">
-                <span>Fecha:</span>
-                <span className="exam-line" style={{ maxWidth: '160px' }} />
-                <span>Puntaje:</span>
-                <span className="exam-line" style={{ maxWidth: '120px' }} />
-              </div>
-            </div>
-            {room.instructions && (
-              <div className="exam-instructions-box">
-                <b>Instrucciones:</b> {room.instructions}
-              </div>
-            )}
-          </div>
-
-          <div className="exam-questions-list">
-            {roomActs.map((act, i) => (
-              <div className="exam-question-item" key={`${act.id}-${i}`}>
-                <div className="exam-q-header">
-                  <span className="exam-q-num">Pregunta {i + 1}</span>
-                  <span className="exam-q-type">{types[act.type].label}</span>
-                  <span className="exam-q-points">[{room.scorePerQuestion} pts]</span>
-                </div>
-                <h4 className="exam-q-title">{act.title}</h4>
-                <p className="exam-q-prompt">{act.type === 'trueFalse' ? (act.details?.trueFalse?.statement || act.prompt) : act.prompt}</p>
-
-                {act.type === 'trueFalse' && (
-                  <div className="exam-tf-boxes">
-                    <span className="exam-check-box">( &nbsp; ) Verdadero</span>
-                    <span className="exam-check-box">( &nbsp; ) Falso</span>
-                  </div>
-                )}
-
-                {act.type === 'singleChoice' && (
-                  <div className="exam-sc-options">
-                    {(act.details?.singleChoice?.options || act.options).map((opt, idx) => {
-                      const label = typeof opt === 'string' ? opt : opt.label
-                      const letter = String.fromCharCode(65 + idx)
-                      return (
-                        <div className="exam-choice-row" key={idx}>
-                          <span className="exam-choice-letter">({letter})</span>
-                          <span>{label}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-
-                {act.type === 'matching' && (
-                  <div className="exam-matching-grid">
-                    <div className="exam-matching-col">
-                      <b>Columna A (Concepto)</b>
-                      {(act.details?.matching?.pairs || []).map((p, idx) => (
-                        <div key={idx} className="exam-match-item">
-                          <span>{idx + 1}. {p.left}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="exam-matching-col">
-                      <b>Columna B (Relación / Definición)</b>
-                      {scrambleRightOptions((act.details?.matching?.pairs || []).map((p) => p.right)).map((opt, idx) => (
-                        <div key={idx} className="exam-match-item">
-                          <span>[ &nbsp;&nbsp; ] {opt}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {act.type === 'sorting' && (
-                  <div className="exam-sorting-box">
-                    <p className="exam-subtext"><b>Elementos para clasificar:</b> {(act.details?.sorting?.items || []).map((item) => item.label).join(' · ')}</p>
-                    <div className="exam-sorting-cols">
-                      {(act.details?.sorting?.categories || []).map((cat) => (
-                        <div className="exam-sort-col" key={cat}>
-                          <b>{cat}</b>
-                          <div className="exam-sort-lines">
-                            <span /><span /><span />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {act.type === 'ordering' && (
-                  <div className="exam-ordering-box">
-                    <p className="exam-subtext">Numera del 1 al {(act.details?.ordering?.steps || []).length} los pasos en orden cronológico o procesal:</p>
-                    {scrambleOrderingSteps(act.details?.ordering?.steps || []).map((step, idx) => (
-                      <div key={idx} className="exam-order-row">
-                        <span className="exam-order-num-box">[ &nbsp;&nbsp; ]</span>
-                        <span>{step}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {act.type === 'scenario' && (
-                  <div className="exam-scenario-box">
-                    {act.details?.scenario?.situation && (
-                      <p className="exam-scenario-sit"><b>Contexto del dilema:</b> {act.details.scenario.situation}</p>
-                    )}
-                    {(act.details?.scenario?.stages || []).map((stg, stgIdx) => (
-                      <div key={stgIdx} className="exam-scenario-stg">
-                        <b>Etapa {stgIdx + 1}: {stg.prompt}</b>
-                        {stg.options.map((opt, optIdx) => (
-                          <div key={optIdx} className="exam-choice-row">
-                            <span className="exam-choice-letter">({String.fromCharCode(65 + optIdx)})</span>
-                            <span>{opt.text}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+        <div className="exam-preview-frame-wrap">
+          <iframe
+            title="Vista previa de examen"
+            srcDoc={htmlDoc}
+            className="exam-preview-frame"
+          />
         </div>
 
         <div className="modal-actions no-print">
           <button type="button" className="outline-button" onClick={onClose}>
             Cerrar
           </button>
-          <button type="button" className="primary-button" onClick={() => window.print()}>
+          <button
+            type="button"
+            className="outline-button"
+            onClick={handleDownload}
+            title="Descargar archivo HTML autónomo para abrir en cualquier dispositivo"
+          >
+            📥 Descargar archivo (.html)
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={handlePrint}
+            title="Imprimir directamente o guardar en PDF"
+          >
             🖨 Imprimir o Guardar PDF
           </button>
         </div>
       </div>
     </div>
   )
+}
+
+function BlankExamModal({ room, activities, onClose }: { room: Room; activities: Activity[]; onClose: () => void }) {
+  return <ExamDocumentModal mode="blank" room={room} activities={activities} onClose={onClose} />
 }
 
 function RoomsView({
@@ -5649,12 +6421,18 @@ function StudentView({ room, roomCode, setRoomCode, studentName, setStudentName,
 function StudentCompletion({
   room,
   attempt,
+  activities = [],
+  studentResponses,
   onLeave,
 }: {
   room: Room | null
   attempt?: StudentAttempt | null
+  activities?: Activity[]
+  studentResponses?: Record<number, ActivityResponse>
   onLeave: () => void
 }) {
+  const [showVoucherModal, setShowVoucherModal] = useState(false)
+
   const downloadVoucher = () => {
     if (!room || !attempt) return
     const lines = [
@@ -5695,6 +6473,19 @@ function StudentCompletion({
     URL.revokeObjectURL(link.href)
   }
 
+  const handleDownloadHtmlVoucher = () => {
+    if (!room || !attempt) return
+    const html = generateExamHtmlDocument({
+      mode: 'student',
+      room,
+      activities,
+      attempt,
+      studentResponses,
+    })
+    const filename = `comprobante-${attempt.roomCode}-${attempt.studentName.trim().replace(/\s+/g, '_')}.html`
+    downloadExamHtmlDocument(filename, html)
+  }
+
   return (
     <div className="student-entry">
       <div className="student-orb completion-orb">✓</div>
@@ -5709,21 +6500,40 @@ function StudentCompletion({
             <small>Tus evidencias y tiempos quedaron registrados de forma segura.</small>
           </div>
         </div>
-        {attempt && (
+        {attempt && room && (
           <div className="completion-voucher-box">
             <div className="voucher-meta">
               <span>Código: <b>{attempt.roomCode}</b></span>
               <span>· {attempt.answeredCount} respondidas</span>
               <span>· {formatDateTime(attempt.finishedAt)}</span>
             </div>
-            <button
-              type="button"
-              className="outline-button wide voucher-download-btn"
-              onClick={downloadVoucher}
-              title="Descargar comprobante en texto plano para respaldo"
-            >
-              📥 Descargar comprobante de entrega (.txt)
-            </button>
+            <div className="completion-voucher-buttons" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+              <button
+                type="button"
+                className="primary-button wide"
+                onClick={() => setShowVoucherModal(true)}
+                title="Ver e imprimir tu comprobante oficial con formato formal idéntico al examen"
+              >
+                📄 Ver e Imprimir Comprobante Oficial
+              </button>
+              <button
+                type="button"
+                className="outline-button wide voucher-download-btn"
+                onClick={handleDownloadHtmlVoucher}
+                title="Descargar comprobante en documento HTML listo para guardar o imprimir"
+              >
+                📥 Descargar Comprobante (.html)
+              </button>
+              <button
+                type="button"
+                className="text-button wide"
+                style={{ fontSize: '11.5px', color: '#64748b', padding: '4px' }}
+                onClick={downloadVoucher}
+                title="Descargar respaldo secundario en texto plano"
+              >
+                Descargar respaldo ligero (.txt)
+              </button>
+            </div>
           </div>
         )}
         <div className="privacy-note">🔒 Privacidad activa: el resultado y calificación final no se exponen al grupo.</div>
@@ -5732,6 +6542,17 @@ function StudentCompletion({
         </button>
       </div>
       <div className="student-footer">EvaluEdu · gracias por participar</div>
+
+      {showVoucherModal && room && (
+        <ExamDocumentModal
+          mode="student"
+          room={room}
+          activities={activities}
+          attempt={attempt}
+          studentResponses={studentResponses}
+          onClose={() => setShowVoucherModal(false)}
+        />
+      )}
     </div>
   )
 }
