@@ -33,6 +33,9 @@ export type Activity = {
   feedback: string
   details?: ActivityDetails
   status: 'published' | 'draft' | 'pending'
+  needsRepair?: boolean
+  repairReason?: string
+  rawImport?: Record<string, unknown>
 }
 
 export type ActivityResponse =

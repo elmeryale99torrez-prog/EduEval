@@ -17,3 +17,11 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
     })
   })
 }
+
+if ('serviceWorker' in navigator && import.meta.env.DEV) {
+  void navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const registration of registrations) {
+      void registration.unregister()
+    }
+  })
+}

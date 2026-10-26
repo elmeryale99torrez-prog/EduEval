@@ -718,3 +718,34 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
 - **Verificación:**
   - `npm run test` completó **89/89 pruebas aprobadas**.
   - `npm run build` compiló satisfactoriamente sin errores.
+
+
+### Etapa 10 a 17 — Evolución v1.2: Motor de actividades, validación JSON v2, Torre de Control, resultados por sala y estabilización PWA — 2026-10-26
+
+- **Definición definitiva de marca:**
+  - El proyecto adopta oficialmente el nombre **EvaluEdu** de forma completa y consistente.
+  - Se actualizaron los textos de la interfaz, el modal de importación guiada, el prompt oficial docente y la denominación de los archivos de exportación a `evaluedu-resultados-[codigo].csv`.
+- **Motor de actividades v1.2 y validador de contenido:**
+  - Se implementó la validación estricta v2 (`parseContentImport`) para los 6 formatos evaluables (`trueFalse`, `singleChoice`, `matching`, `sorting`, `ordering`, `scenario`) con generación automática de objetos `details` compatibles.
+  - Pistas pedagógicas (`hint`) obligatorias en todas las actividades para guiar al estudiante sin revelar la respuesta correcta.
+  - Explicaciones formativas opcionales para consulta privada docente.
+- **Rediseño de Pantalla de Inicio (`Overview`):**
+  - Botón de acción semántico `[＋ Nuevo contenido]`.
+  - Métrica de pulso consolidada (contenidos preparados, salas activas, evaluaciones registradas).
+  - Actividad viva con las últimas 3 salas y acceso contextual.
+  - Consejo del día animado con la Chispa Curiosa, con rotación aleatoria por sesión (`sessionStorage`) y diseño cálido sin controles distractores.
+  - Catálogo pedagógico completo: 6 formatos activos v1.2 (con modal de descripción pedagógica sobre habilidades y vivencia del estudiante) y 5 formatos proyectados v1.3 en tarjetas oscuras con badge `Próximamente`.
+- **Rediseño de Resultados y Contenido:**
+  - Agrupación por salas con tarjetas métricas independientes.
+  - Navegación multinivel con buscador de estudiantes en tiempo real y exportación directa por sala a Excel/CSV.
+  - Prevención de selección accidental de texto a nivel global (`user-select: none`).
+- **Estabilización de sesión y eliminación de recargas involuntarias:**
+  - Erradicación de la condición de carrera en eventos de sesión de Supabase que desmontaba la interfaz en segundo plano.
+  - Eliminación del contador de pendientes y botón de sincronización confuso en el banner superior, sustituido por una píldora sobria (`En línea`, `Modo local` o `Sin conexión`).
+  - Blindaje de la cola offline con descarte seguro tras reintentos fallidos.
+- **Preparación y actualización de la PWA v1.2:**
+  - Versión del Service Worker actualizada a `evaluedu-shell-v9` en `public/sw.js` y bus de caché a `?v=9` en `index.html`.
+  - Los dispositivos móviles y navegadores que tienen la app instalada o en caché se actualizarán automáticamente en segundo plano a la versión v1.2 al conectarse a internet.
+- **Verificación:**
+  - `npm run test`: **91/91 pruebas unitarias aprobadas (14 suites en verde)**.
+  - `npm run build`: compilación de producción con Vite (`tsc -b && vite build`) limpia y exitosa (código 0).

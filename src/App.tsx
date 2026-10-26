@@ -12,7 +12,7 @@ import { canAccessPanel, createTeacherProfile, getProfile } from './lib/auth'
 import type { Profile } from './lib/auth'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { enqueueSyncItem, markSyncItemFailed, readSyncQueue, removeSyncItem, syncQueueChangedEvent, type SyncKind, type SyncQueueItem } from './lib/sync'
-import { detectContentCompatibility, OFFICIAL_IMPORT_PROMPT, type ContentImportDocument, parseContentImport } from './lib/contentImport'
+import { detectContentCompatibility, OFFICIAL_IMPORT_PROMPT, type ContentImportDocument, type ContentImportDocumentV1, type ContentImportResultV2, type ContentImportResultV1, type ActivityNeedingRepair, parseContentImport } from './lib/contentImport'
 import { TRUE_FALSE_LIMITS, validateTrueFalseDefinition } from './lib/activities/trueFalse'
 import { SINGLE_CHOICE_LIMITS, validateSingleChoiceDefinition } from './lib/activities/singleChoice'
 import { MATCHING_LIMITS, scrambleRightOptions, validateMatchingDefinition } from './lib/activities/matching'
@@ -376,6 +376,8 @@ function App() {
   const [showFeedbackModal, setShowFeedbackModal] = useState(false)
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [editingActivity, setEditingActivity] = useState<Activity | null>(null)
+  const [preselectedRoomActivityIds, setPreselectedRoomActivityIds] = useState<string[] | null>(null)
 
   useEffect(() => localStorage.setItem('edueval-activities', JSON.stringify(activities)), [activities])
   useEffect(() => localStorage.setItem('edueval-rooms', JSON.stringify(rooms)), [rooms])
@@ -471,7 +473,7 @@ function App() {
   useEffect(() => {
     if (!supabase || !authSession) { setAuthProfile(null); setAuthProfileError(null); setAuthProfileChecked(true); return }
     let mounted = true
-    setAuthProfileChecked(false)
+    if (!authProfile) setAuthProfileChecked(false)
     setAuthProfileError(null)
     getProfile(authSession.user.id).then(({ profile, error }) => { if (mounted) { setAuthProfile(profile); setAuthProfileError(error); setAuthProfileChecked(true) } })
     return () => { mounted = false }
@@ -686,6 +688,7 @@ function App() {
     const keepAppHistory = () => window.history.pushState({ edueval: true }, '', window.location.href)
     const handleBack = () => {
       if (mobileNavOpen) { setMobileNavOpen(false); keepAppHistory(); return }
+      if (editingActivity) { setEditingActivity(null); keepAppHistory(); return }
       if (selectedActivity) { setSelectedActivity(null); keepAppHistory(); return }
       if (showPasswordChange) { setShowPasswordChange(false); keepAppHistory(); return }
       if (showHelpModal) { setShowHelpModal(false); keepAppHistory(); return }
@@ -878,24 +881,152 @@ function App() {
     } else notify('Borrador de plantilla guardado.')
     void persistCloudTemplate(savedTemplate, generated)
   }
-  const importContent = (document: ContentImportDocument) => {
+
+  const updateTemplate = async (template: EvaluationTemplate) => {
+    setTemplates((current) => current.map((item) => (item.id === template.id ? template : item)))
+    if (supabase && isCloudId(template.id)) {
+      await supabase.from('evaluation_templates').update({
+        title: template.title,
+        subject: template.subject,
+        description: template.description,
+        objective: template.objective,
+        competency: template.competency,
+        status: template.status,
+      }).eq('id', template.id)
+    }
+    notify(`Plantilla "${template.title}" actualizada.`)
+  }
+
+  const deleteTemplate = async (template: EvaluationTemplate) => {
+    if (!window.confirm(`¿Eliminar la plantilla "${template.title || 'Sin título'}"? Esta acción borrará el tema y sus actividades asociadas para mantener tu biblioteca limpia.`)) {
+      return
+    }
+    setTemplates((current) => current.filter((item) => item.id !== template.id))
+    setActivities((current) => current.filter((item) => item.templateId !== template.id))
+    if (supabase && isCloudId(template.id)) {
+      await supabase.from('evaluation_templates').delete().eq('id', template.id)
+    }
+    notify(`Plantilla "${template.title}" y sus actividades asociadas fueron eliminadas.`)
+  }
+
+  const deleteAttempt = async (attemptId: string) => {
+    const attempt = attempts.find((a) => a.id === attemptId)
+    setAttempts((current) => current.filter((item) => item.id !== attemptId))
+    if (attempt) {
+      const key = studentAttemptKey(attempt.roomId, attempt.studentName)
+      const storedKeys = readStorage<string[]>('edueval-attempts', [])
+      localStorage.setItem('edueval-attempts', JSON.stringify(storedKeys.filter((k) => k !== key)))
+    }
+    if (supabase && isCloudId(attemptId)) {
+      await supabase.from('attempts').delete().eq('id', attemptId)
+    }
+    notify('Intento eliminado de los resultados.')
+  }
+
+  const clearAttempts = async (roomId?: string) => {
+    if (roomId && roomId !== 'all') {
+      const toRemove = attempts.filter((a) => a.roomId === roomId)
+      setAttempts((current) => current.filter((a) => a.roomId !== roomId))
+      const removeKeys = new Set(toRemove.map((a) => studentAttemptKey(a.roomId, a.studentName)))
+      const storedKeys = readStorage<string[]>('edueval-attempts', [])
+      localStorage.setItem('edueval-attempts', JSON.stringify(storedKeys.filter((k) => !removeKeys.has(k))))
+      if (supabase) {
+        for (const a of toRemove) {
+          if (isCloudId(a.id)) {
+            void supabase.from('attempts').delete().eq('id', a.id)
+          }
+        }
+      }
+      notify(`Se eliminaron ${toRemove.length} intento(s) de esta sala.`)
+    } else {
+      setAttempts([])
+      localStorage.setItem('edueval-attempts', JSON.stringify([]))
+      if (supabase) {
+        for (const a of attempts) {
+          if (isCloudId(a.id)) {
+            void supabase.from('attempts').delete().eq('id', a.id)
+          }
+        }
+      }
+      notify('Todos los resultados fueron eliminados.')
+    }
+  }
+  const importContent = (importPayload: ImportPayload) => {
     const stamp = Date.now()
+    if ('version' in importPayload && importPayload.version === 2) {
+      const savedTemplate: EvaluationTemplate = {
+        id: `t${stamp}`,
+        title: importPayload.topic.title,
+        subject: importPayload.topic.subject,
+        description: importPayload.topic.summary,
+        objective: importPayload.topic.objective,
+        competency: importPayload.topic.competency,
+        difficulty: 'Intermedio',
+        concepts: [],
+        situations: [],
+        processSteps: [],
+        categories: [],
+        status: 'accepted',
+        updatedAt: new Date().toISOString(),
+        source: 'json',
+        schemaVersion: 2,
+      }
+      const importedActivities: Activity[] = importPayload.validActivities.map((activity, index) => ({
+        ...activity,
+        id: activity.id || `a${stamp}-import-${index}`,
+        templateId: savedTemplate.id,
+        status: 'pending' as const,
+      }))
+
+      const repairActivities: Activity[] = (importPayload.activitiesNeedingRepair as ActivityNeedingRepair[]).map((item, index) => {
+        const base = item.partialActivity || {}
+        return {
+          id: base.id || `a${stamp}-repair-${index}`,
+          templateId: savedTemplate.id,
+          title: item.title || `${savedTemplate.title} · ${types[item.type]?.label || item.type}`,
+          type: item.type,
+          topic: savedTemplate.subject,
+          difficulty: 'Intermedio' as const,
+          prompt: item.prompt || 'Consigna por revisar',
+          options: base.options || [],
+          answer: base.answer || '',
+          feedback: base.feedback || '',
+          details: base.details,
+          status: 'pending' as const,
+          needsRepair: true,
+          repairReason: item.reason,
+          rawImport: item.raw,
+        }
+      })
+
+      const allActivities = [...importedActivities, ...repairActivities]
+      setTemplates((current) => [savedTemplate, ...current])
+      setActivities((current) => [...allActivities, ...current])
+      void persistCloudTemplate(savedTemplate, allActivities)
+      const repairCount = repairActivities.length
+      const repairNotice = repairCount > 0 ? ` (${repairCount} con observaciones para revisar o corregir en el editor)` : ''
+      notify(allActivities.length ? `JSON v2 válido: ${allActivities.length} propuesta${allActivities.length === 1 ? '' : 's'} creada${allActivities.length === 1 ? '' : 's'} para revisión${repairNotice}.` : 'JSON v2 válido, pero no contiene actividades.')
+      show('proposals')
+      return
+    }
+
+    const docV1 = importPayload as ContentImportDocumentV1
     const savedTemplate: EvaluationTemplate = {
       id: `t${stamp}`,
-      title: document.content.title,
-      subject: document.content.subject,
-      description: document.content.description,
-      objective: document.content.objective,
-      competency: document.content.competency,
-      difficulty: document.content.difficulty,
-      concepts: document.content.concepts.map((concept, index) => ({ ...concept, id: `c-import-${stamp}-${index}`, example: concept.example ?? '' })),
-      situations: document.content.situations.map((situation, index) => ({ ...situation, id: `s-import-${stamp}-${index}` })),
-      processSteps: document.content.processSteps,
-      categories: document.content.categories,
+      title: docV1.content.title,
+      subject: docV1.content.subject,
+      description: docV1.content.description,
+      objective: docV1.content.objective,
+      competency: docV1.content.competency,
+      difficulty: docV1.content.difficulty,
+      concepts: docV1.content.concepts.map((concept, index) => ({ ...concept, id: `c-import-${stamp}-${index}`, example: concept.example ?? '' })),
+      situations: docV1.content.situations.map((situation, index) => ({ ...situation, id: `s-import-${stamp}-${index}` })),
+      processSteps: docV1.content.processSteps,
+      categories: docV1.content.categories,
       status: 'accepted',
       updatedAt: new Date().toISOString(),
       source: 'json',
-      schemaVersion: document.version,
+      schemaVersion: docV1.version,
     }
     const generated = buildActivitiesFromTemplate(savedTemplate).map((activity, index) => ({ ...activity, id: `a${stamp}-import-${index}`, status: 'pending' as const }))
     setTemplates((current) => [savedTemplate, ...current])
@@ -913,6 +1044,28 @@ function App() {
       })
     }
     notify(status === 'published' ? 'Propuesta aprobada y publicada.' : 'Propuesta devuelta a borradores.')
+  }
+
+  const reviewBatch = (ids: string[], status: 'published' | 'draft') => {
+    if (!ids.length) return
+    const idSet = new Set(ids)
+    setActivities((current) => current.map((item) => idSet.has(item.id) ? { ...item, status } : item))
+    if (supabase && authProfile) {
+      const client = supabase
+      ids.filter(isCloudId).forEach((id) => {
+        void client.from('activities').update({ status }).eq('id', id).eq('owner_id', authProfile.id)
+      })
+    }
+    notify(status === 'published' ? `${ids.length} propuesta${ids.length === 1 ? '' : 's'} aprobada${ids.length === 1 ? '' : 's'} y publicada${ids.length === 1 ? '' : 's'}.` : `${ids.length} propuesta${ids.length === 1 ? '' : 's'} devuelta${ids.length === 1 ? '' : 's'} a borradores.`)
+  }
+
+  const createRoomFromProposals = (activityIds: string[]) => {
+    if (!activityIds.length) return
+    const idSet = new Set(activityIds)
+    setActivities((current) => current.map((act) => idSet.has(act.id) && act.status === 'pending' ? { ...act, status: 'published' as const } : act))
+    setPreselectedRoomActivityIds(activityIds)
+    show('rooms')
+    notify(`Se preparó la sala con ${activityIds.length} actividad${activityIds.length === 1 ? '' : 'es'}. Configura los ajustes de la evaluación.`)
   }
 
   const persistCloudRoom = async (room: Room, localId: string, queueOnFailure = true) => {
@@ -1106,8 +1259,15 @@ function App() {
         } else if (item.kind === 'attempt' && isRecord(payload.record) && typeof payload.participantId === 'string') {
           synced = await persistCloudAttempt(payload.record as StudentAttempt, payload.participantId, studentGuestToken ?? readSessionStorage('edueval-student-guest-token'), false, isRecord(payload.responses) ? payload.responses as Record<number, ActivityResponse> : {})
         }
-        if (synced) setSyncQueue(removeSyncItem(item.id))
-        else setSyncQueue(markSyncItemFailed(item.id, 'No se pudo completar la sincronización.'))
+        if (synced) {
+          setSyncQueue(removeSyncItem(item.id))
+        } else {
+          if (item.attempts >= 2) {
+            setSyncQueue(removeSyncItem(item.id))
+          } else {
+            setSyncQueue(markSyncItemFailed(item.id, 'No se pudo completar la sincronización.'))
+          }
+        }
       }
     } finally {
       setSyncing(false)
@@ -1115,9 +1275,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isOnline || !authSession || !authProfile || syncQueue.length === 0) return
+    if (!isOnline || !authSession || !authProfile || syncQueue.length === 0 || syncing) return
     void flushSyncQueue()
-  }, [isOnline, authSession, authProfile, syncQueue.length])
+  }, [isOnline, authSession, authProfile])
 
   const finishStudentAttempt = (reason: 'completed' | 'timeout' = 'completed', finalEvent?: AttemptEvent) => {
     if (!studentRoom) return
@@ -1248,13 +1408,19 @@ function App() {
     sessionStorage.removeItem(studentSessionStorageKey)
     show('overview')
   }
-  const exportCsv = () => {
+  const exportCsv = (roomIdFilter?: string) => {
+    const attemptsToExport = roomIdFilter && roomIdFilter !== 'all'
+      ? displayedAttempts.filter((a) => a.roomId === roomIdFilter)
+      : displayedAttempts
     const rows = [['intento_id', 'estudiante', 'sala', 'codigo_sala', 'estado', 'inicio', 'finalizacion', 'preguntas', 'respondidas', 'omitidas', 'correctas', 'puntaje', 'puntaje_maximo', 'actividad', 'tipo_actividad', 'estado_respuesta', 'respuesta', 'correcta', 'puntaje_respuesta', 'pista_entregada', 'explicacion_privada', 'tiempo_segundos']]
-    displayedAttempts.forEach((attempt) => attempt.answers.forEach((answer) => rows.push([attempt.id, attempt.studentName, attempt.roomName, attempt.roomCode, attempt.status === 'timeout' ? 'tiempo_agotado' : 'finalizada', attempt.startedAt, attempt.finishedAt, String(attempt.totalQuestions), String(attempt.answeredCount), String(attempt.omittedCount), String(attempt.correctCount), String(attempt.score), String(attempt.maxScore), answer.activityTitle, types[answer.activityType].label, answer.status === 'answered' ? 'respondida' : 'omitida', answer.response || 'Sin respuesta', answer.correct === null ? 'no evaluada' : answer.correct ? 'si' : 'no', String(answer.score), answer.hint ?? '', answer.explanation ?? '', String(answer.timeSeconds)])))
+    attemptsToExport.forEach((attempt) => attempt.answers.forEach((answer) => rows.push([attempt.id, attempt.studentName, attempt.roomName, attempt.roomCode, attempt.status === 'timeout' ? 'tiempo_agotado' : 'finalizada', attempt.startedAt, attempt.finishedAt, String(attempt.totalQuestions), String(attempt.answeredCount), String(attempt.omittedCount), String(attempt.correctCount), String(attempt.score), String(attempt.maxScore), answer.activityTitle, types[answer.activityType].label, answer.status === 'answered' ? 'respondida' : 'omitida', answer.response || 'Sin respuesta', answer.correct === null ? 'no evaluada' : answer.correct ? 'si' : 'no', String(answer.score), answer.hint ?? '', answer.explanation ?? '', String(answer.timeSeconds)])))
     if (rows.length === 1) rows.push(['', 'Sin intentos registrados', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''])
     const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(';')).join('\n')
-    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })); link.download = 'edueval-resultados.csv'; link.click(); URL.revokeObjectURL(link.href)
-    notify(`${displayedAttempts.length} intento${displayedAttempts.length === 1 ? '' : 's'} exportado${displayedAttempts.length === 1 ? '' : 's'} para abrir en Excel.`)
+    const fileName = roomIdFilter && roomIdFilter !== 'all'
+      ? `evaluedu-resultados-${attemptsToExport[0]?.roomCode || 'sala'}.csv`
+      : 'evaluedu-resultados.csv'
+    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })); link.download = fileName; link.click(); URL.revokeObjectURL(link.href)
+    notify(`${attemptsToExport.length} intento${attemptsToExport.length === 1 ? '' : 's'} exportado${attemptsToExport.length === 1 ? '' : 's'} para abrir en Excel.`)
   }
 
   const studentActivities = studentRoom ? (studentQuestionIds.length ? studentQuestionIds : studentRoom.activities).map((id) => published.find((item) => item.id === id)).filter(Boolean) as Activity[] : published
@@ -1268,7 +1434,7 @@ function App() {
   if (isSupabaseConfigured && !authChecked) return <AuthLoading />
   if (isSupabaseConfigured && passwordRecoveryFlow && !authSession) return <PasswordRecoveryUnavailableScreen onBack={() => { clearInviteUrl(); setPasswordRecoveryFlow(false) }} />
   if (isSupabaseConfigured && passwordRecoveryFlow && authSession) return <PasswordRecoveryScreen email={authSession.user.email ?? ''} onComplete={completePasswordRecovery} onCancel={cancelPasswordRecovery} />
-  if (isSupabaseConfigured && authSession && !authProfileChecked) return <AuthLoading />
+  if (isSupabaseConfigured && authSession && !authProfileChecked && !authProfile) return <AuthLoading />
   if (isSupabaseConfigured && inviteFlow && !authSession) return <InviteLinkErrorScreen onBack={() => { clearInviteUrl(); setInviteFlow(false) }} />
   if (isSupabaseConfigured && inviteFlow && authSession && authProfileError) return <ProfileVerificationErrorScreen email={authSession.user.email ?? ''} error={authProfileError} onBack={cancelInvite} />
   if (isSupabaseConfigured && inviteFlow && authSession && authProfile) return <InviteAcceptanceScreen email={authSession.user.email ?? ''} onComplete={completeInvite} onCancel={cancelInvite} />
@@ -1289,17 +1455,29 @@ function App() {
   ) : <div className="app-shell">
     <header className="topbar">
       <button className="brand" onClick={() => show('overview')} aria-label="Ir al inicio"><span className="brand-mark mascot-mark"><IconSparkMascot size={22} /></span><span><strong>EvaluEdu</strong><small>aprendizaje activo</small></span></button>
-       <div className="topbar-actions"><span className={`connection-pill ${backendReady ? 'ready' : ''} ${!isOnline ? 'offline' : ''} ${syncQueue.length ? 'pending' : ''}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{syncLabel}</span>{syncQueue.length > 0 && isOnline && <button className="sync-button" type="button" onClick={() => void flushSyncQueue()} disabled={syncing}>{syncing ? '↻' : '↻ Sincronizar'}</button>}{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
+       <div className="topbar-actions"><span className={`connection-pill ${!isOnline ? 'offline' : 'ready'}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{!isOnline ? 'Sin conexión' : backendReady ? 'En línea' : 'Modo local'}</span>{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
     </header>
     {role !== 'student' && mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavOpen(false)} />}
     <div className="layout">
-      {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu MVP · v0.1</small></div></aside>}
-      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} onExport={exportCsv} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
+      {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu · v1.2</small></div></aside>}
+      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Abrir panel</summary><div>{canAccessPanel(authProfile, 'teacher') && <a href={panelUrl('teacher')} target="_blank" rel="noopener noreferrer">Docente</a>}<a href={panelUrl('student')} target="_blank" rel="noopener noreferrer">Estudiante</a>{canAccessPanel(authProfile, 'admin') && <a href={panelUrl('admin')} target="_blank" rel="noopener noreferrer">Administración</a>}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
     </div>{toast && <div className="toast" role="status">✓ {toast}</div>}
     {showPasswordChange && authSession && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} onSaved={() => { setShowPasswordChange(false); notify('Contraseña actualizada correctamente.') }} />}
     {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
     {showFeedbackModal && <FeedbackModal defaultEmail={authSession?.user.email ?? ''} defaultName={displayName} onClose={() => setShowFeedbackModal(false)} onSent={() => { setShowFeedbackModal(false); notify('Se abrió tu correo para enviar la sugerencia.') }} />}
     {selectedActivity && role !== 'student' && <ActivityPreview activity={selectedActivity} onClose={() => setSelectedActivity(null)} onDelete={role === 'teacher' ? () => void deleteActivity(selectedActivity) : undefined} />}
+    {editingActivity && (
+      <ActivityForm
+        initialType={editingActivity.type}
+        initialActivity={editingActivity}
+        onCancel={() => setEditingActivity(null)}
+        onSave={(updated) => {
+          setActivities((current) => current.map((item) => item.id === updated.id ? updated : item))
+          setEditingActivity(null)
+          notify('Actividad corregida y actualizada.')
+        }}
+      />
+    )}
   </div>
 }
 
@@ -1407,7 +1585,7 @@ function RoleLanding({
         <RoleCard icon={<IconStudent size={26} />} title="Estudiante" description="Ingresa a una sala con el código de tu docente." onClick={() => onChoose('student')} tone="student" />
         <RoleCard icon={<IconAdmin size={26} />} title="Administrador" description="Gestiona docentes, permisos y configuración general." onClick={() => onChoose('admin')} tone="admin" />
       </div>
-      <small className="landing-note">EvaluEdu · v1.0</small>
+      <small className="landing-note">EvaluEdu · v1.2</small>
     </div>
   )
 }
@@ -1723,7 +1901,444 @@ function AdminAuditView({ attempts, rooms, adminData, onHome }: { attempts: Stud
 
 function AdminRoomsView({ rooms, activities, adminData, onHome }: { rooms: Room[]; activities: Activity[]; adminData: AdminSnapshot | null; onHome: () => void }) { const globalRooms = adminData?.rooms ?? []; return <><PageIntro eyebrow="ADMINISTRACIÓN" title="Salas globales" description="Supervisa el ciclo de las evaluaciones sin modificar la configuración del docente." action={<span className="tag published">{adminData ? 'Solo lectura · Supabase' : 'Cargando salas'}</span>} /><div className="admin-notice"><span>{adminData ? '✓' : '!'}</span><div><b>{adminData ? 'Vista global sincronizada.' : 'Cargando salas globales.'}</b><p>{adminData ? 'La administración puede supervisar las salas de todos los docentes sin modificar su configuración.' : 'La copia local se mantiene disponible mientras se consulta el servidor.'}</p></div></div><section className="panel"><div className="panel-heading"><div><h2>{adminData ? globalRooms.length : rooms.length} salas visibles</h2><p>Las salas archivadas conservan su trazabilidad y resultados.</p></div></div><div className="results-table-wrap"><table><thead><tr><th>Sala</th><th>Docente</th><th>Código</th><th>Estado</th><th>Preguntas</th><th>Estudiantes</th><th>Actividades</th></tr></thead><tbody>{adminData ? globalRooms.map((room) => <tr key={room.id}><td><b>{room.name}</b><small>{formatDate(room.createdAt)}</small></td><td>{room.ownerName}</td><td>{room.code}</td><td><span className={`result-status ${room.status === 'active' ? '' : 'timeout'}`}>{roomStatusLabel(room.status)}</span></td><td>{room.questionCount}</td><td>Máx. {room.limit}</td><td>{room.activities.map((activity) => activity.title).join(' · ') || 'Sin actividades'}</td></tr>) : rooms.map((room) => <tr key={room.id}><td><b>{room.name}</b><small>{room.instructions}</small></td><td>Docente local</td><td>{room.code}</td><td><span className={`result-status ${room.status === 'active' ? '' : 'timeout'}`}>{roomStatusLabel(room.status)}</span></td><td>{room.questionCount}</td><td>Máx. {room.limit}</td><td>{room.activities.map((id) => activities.find((activity) => activity.id === id)?.title ?? 'Actividad').join(' · ')}</td></tr>)}</tbody></table></div></section></> }
 
-function Overview({ activities, rooms, pending, onNavigate, onSelect, firstName, todayLabel }: { activities: Activity[]; rooms: Room[]; pending: Activity[]; onNavigate: (view: View) => void; onSelect: (activity: Activity) => void; firstName: string; todayLabel: string }) { return <><PageIntro eyebrow={todayLabel.toUpperCase()} title={`Buenos días, ${firstName}`} description="Un vistazo claro para preparar experiencias que hagan pensar." action={<button className="primary-button" onClick={() => onNavigate('content')}>＋ Crear actividad</button>} /><section className="metric-grid"><Metric icon="◈" value={activities.filter((item) => item.status === 'published').length} label="Actividades publicadas" trend="Disponibles para reutilizar" tone="mint" /><Metric icon="⌘" value={rooms.filter((item) => !['finished', 'archived'].includes(item.status)).length} label="Salas activas" trend="Preparadas o en curso" tone="lavender" /><Metric icon="◌" value={pending.length} label="Por revisar" trend="Requieren tu atención" tone="peach" /></section><div className="dashboard-grid"><section className="panel activity-panel"><div className="panel-heading"><div><h2>Actividad reciente</h2><p>Lo que está pasando en tus clases.</p></div><button className="text-button" onClick={() => onNavigate('results')}>Ver resultados →</button></div>{rooms.slice(0, 2).map((room) => <div className="activity-row" key={room.id}><span className="row-icon room">⌘</span><div><b>{room.name}</b><small>{roomStatusLabel(room.status)} · código {room.code}</small></div><strong>{room.activities.length} activ.</strong></div>)}<div className="activity-row"><span className="row-icon check">✓</span><div><b>Contenido listo para usar</b><small>{activities.length} actividades en tu biblioteca</small></div><strong>Biblioteca</strong></div></section><section className="panel tip-panel"><span className="tip-spark">✦</span><p className="eyebrow">SUGERENCIA DE HOY</p><h2>Combina formatos</h2><p>Una sala con decisión, clasificación y reflexión ayuda a observar distintos tipos de razonamiento.</p><button className="outline-button" onClick={() => onNavigate('rooms')}>Crear una sala →</button></section></div><section className="section-block"><div className="section-heading"><div><p className="eyebrow">TU BIBLIOTECA</p><h2>Actividades destacadas</h2></div><button className="text-button" onClick={() => onNavigate('content')}>Ver todas →</button></div>{activities.length ? <div className="activity-cards">{activities.slice(0, 3).map((activity) => <ActivityCard key={activity.id} activity={activity} onOpen={() => onSelect(activity)} />)}</div> : <div className="empty-state"><span>◈</span><h2>Crea tu primera actividad</h2><p>Empieza con una plantilla para generar actividades que puedas reutilizar en tus salas.</p><button className="primary-button" onClick={() => onNavigate('content')}>Ir a Contenido</button></div>}</section></> }
+interface FormatCatalogItem {
+  id: string
+  icon: string
+  title: string
+  subtitle: string
+  status: 'active' | 'upcoming'
+  badge: string
+  evaluates: string
+  studentExperience: string
+  contentRequirements: string
+}
+
+const FORMAT_CATALOG: FormatCatalogItem[] = [
+  {
+    id: 'trueFalse',
+    icon: '✓',
+    title: 'Falso o Verdadero',
+    subtitle: 'Verificación y contraste conceptual',
+    status: 'active',
+    badge: 'Activo · v1.2',
+    evaluates: 'Capacidad de discernir afirmaciones precisas de conceptos erróneos o confusiones habituales sin depender de la memoria pasiva.',
+    studentExperience: 'El estudiante analiza una afirmación. Si la respuesta es incorrecta, la aplicación le envía una pista orientadora para inducir su relectura reflexiva, sin revelarle la clave.',
+    contentRequirements: 'Afirmaciones claras con justificación pedagógica y pistas formativas orientadoras.',
+  },
+  {
+    id: 'singleChoice',
+    icon: '◉',
+    title: 'Opción Única',
+    subtitle: 'Discriminación con distractores fundamentados',
+    status: 'active',
+    badge: 'Activo · v1.2',
+    evaluates: 'Comprensión conceptual profunda y capacidad de descartar alternativas construidas sobre errores conceptuales comunes.',
+    studentExperience: 'Opciones barajadas aleatoriamente. Al responder, el alumno recibe retroalimentación explicativa orientada al aprendizaje.',
+    contentRequirements: 'Pregunta clara, una única respuesta correcta inequívoca y distractores plausibles del mismo tema.',
+  },
+  {
+    id: 'matching',
+    icon: '⇄',
+    title: 'Asociación de Conceptos',
+    subtitle: 'Correspondencia biunívoca entre elementos',
+    status: 'active',
+    badge: 'Activo · v1.2',
+    evaluates: 'Relación funcional y definición exacta entre términos, causas, personajes o propiedades emparejadas.',
+    studentExperience: 'Términos en una columna y definiciones en otra con selector dinámico o arrastre. Pistas orientadoras en emparejamientos fallidos.',
+    contentRequirements: 'Mínimo dos pares inequívocos término ↔ definición sin ambigüedades cruzadas.',
+  },
+  {
+    id: 'sorting',
+    icon: '⊞',
+    title: 'Clasificación por Categorías',
+    subtitle: 'Agrupación taxonómica arrastrar y soltar',
+    status: 'active',
+    badge: 'Activo · v1.2',
+    evaluates: 'Habilidad para estructurar conceptos o casos bajo etiquetas y criterios taxonómicos rigurosos.',
+    studentExperience: 'Cajas de categorías visibles y fichas interactivas para clasificar, con adaptación accesible para pantallas móviles.',
+    contentRequirements: 'Categorías bien delimitadas y elementos asignados de forma exclusiva a una categoría.',
+  },
+  {
+    id: 'ordering',
+    icon: '↕',
+    title: 'Ordenamiento Secuencial',
+    subtitle: 'Secuenciación lógica o cronológica de procesos',
+    status: 'active',
+    badge: 'Activo · v1.2',
+    evaluates: 'Comprensión de procesos paso a paso, cronologías históricas o algoritmos procedimentales de resolución.',
+    studentExperience: 'Bloques desordenados con controles táctiles para subir o bajar de posición hasta establecer la secuencia correcta.',
+    contentRequirements: 'Pasos o eventos sucesivos con un orden lógico único y justificado.',
+  },
+  {
+    id: 'scenario',
+    icon: '✦',
+    title: 'Escenario de Decisiones',
+    subtitle: 'Criterio situacional con consecuencias reales',
+    status: 'active',
+    badge: 'Activo · v1.2',
+    evaluates: 'Juicio crítico y toma de decisiones frente a situaciones del mundo real o dilemas profesionales aplicados.',
+    studentExperience: 'Lectura inmersiva del caso y toma de postura entre varias opciones. Cada camino despliega consecuencias formativas explicadas.',
+    contentRequirements: 'Descripción del contexto situacional, opciones de acción concretas y consecuencias formativas para cada alternativa.',
+  },
+  // 5 FORMATOS FUTUROS (v1.3)
+  {
+    id: 'multiSelect',
+    icon: '☑',
+    title: 'Selección Múltiple',
+    subtitle: 'Múltiples respuestas correctas',
+    status: 'upcoming',
+    badge: 'Próximamente',
+    evaluates: 'Discriminación analítica integral: identificar todos los factores o características válidas de un fenómeno sin omitir elementos esenciales.',
+    studentExperience: 'Casillas de verificación múltiples (ej. «selecciona 3 de 5») con evaluación de aciertos y feedback específico por criterio.',
+    contentRequirements: 'Premisa multidimensional y opciones donde dos o más son correctas bajo justificación pedagógica.',
+  },
+  {
+    id: 'fillBlanks',
+    icon: '✍',
+    title: 'Completar Espacios Guiado',
+    subtitle: 'Texto con banco de conceptos',
+    status: 'upcoming',
+    badge: 'Próximamente',
+    evaluates: 'Precisión terminológica y dominio de vocabulario técnico en un contexto de párrafo fluido o demostración estructurada.',
+    studentExperience: 'Párrafo con huecos numerados y banco cerrado de conceptos para encajar en el lugar correcto.',
+    contentRequirements: 'Texto descriptivo con términos clave delimitados y distractores léxicos plausibles.',
+  },
+  {
+    id: 'spotError',
+    icon: '⚡',
+    title: 'Detección del Error',
+    subtitle: 'Identificación de inconsistencias conceptuales',
+    status: 'upcoming',
+    badge: 'Próximamente',
+    evaluates: 'Auditoría crítica y pensamiento analítico: capacidad de encontrar el fallo conceptual o la trampa en un procedimiento o argumento.',
+    studentExperience: 'El estudiante revisa un conjunto de pasos o afirmaciones y señala cuál es el que rompe la regla o miente.',
+    contentRequirements: 'Caso o procedimiento con un error sutil pero conceptualmente verificable y su fundamentación.',
+  },
+  {
+    id: 'gridCheck',
+    icon: '▦',
+    title: 'Matriz de Doble Entrada',
+    subtitle: 'Cruce de propiedades multidimensional',
+    status: 'upcoming',
+    badge: 'Próximamente',
+    evaluates: 'Capacidad de comparar simultáneamente varios conceptos bajo múltiples criterios (ej. mitocondria vs cloroplasto vs núcleo).',
+    studentExperience: 'Tabla con casillas de verificación en los cruces entre filas y columnas, con feedback granular por propiedad.',
+    contentRequirements: 'Matriz de filas (elementos), columnas (características) y asignaciones booleanas esperadas.',
+  },
+  {
+    id: 'subcategories',
+    icon: '⎘',
+    title: 'Categorías Anidadas',
+    subtitle: 'Taxonomía con jerarquías y subgrupos',
+    status: 'upcoming',
+    badge: 'Próximamente',
+    evaluates: 'Comprensión de relaciones de inclusión, subtipos taxonómicos o conjuntos con elementos compartidos.',
+    studentExperience: 'Organización de elementos en categorías principales y sus respectivas subcategorías jerárquicas con validación estructurada.',
+    contentRequirements: 'Árbol taxonómico de dos niveles con asignaciones precisas.',
+  },
+]
+
+const PEDAGOGICAL_TIPS = [
+  'La retroalimentación orientadora enseña más cuando guía al alumno con una pista que cuando le da la respuesta correcta servida.',
+  'En preguntas de opción única, un buen distractor debe basarse en un error conceptual frecuente, no en trucos ni ambigüedades.',
+  'Los escenarios de decisiones funcionan mejor cuando plantean un dilema del mundo real con consecuencias lógicas para cada camino.',
+  'El tiempo por pregunta es opcional: para evaluaciones diagnósticas profundas, es preferible permitir que el estudiante reflexione sin prisa.',
+  'En falso o verdadero, contrasta conceptos afines para evaluar si el estudiante distingue los matices y no solo memoriza definiciones.',
+  'Las actividades de clasificación permiten verificar si el alumno domina la taxonomía y los criterios de pertenencia de un tema.',
+  'El estudiante nunca ve el puntaje final de la prueba, protegiendo el carácter formativo y evitando la ansiedad de calificación.',
+  'Puedes exportar los resultados a Excel desde la pantalla de Resultados para analizar qué preguntas requirieron mayor acompañamiento.',
+  'Combina formatos de diferente naturaleza (ej. una decisión situacional con una ordenación) para observar distintos tipos de razonamiento.',
+  'La preparación de plantillas permite reutilizar tu material pedagógico en múltiples salas y paralelos a lo largo del año.',
+]
+
+function Overview({
+  activities,
+  rooms,
+  pending,
+  templates = [],
+  attempts = [],
+  onNavigate,
+  onSelect,
+  firstName,
+  todayLabel,
+}: {
+  activities: Activity[]
+  rooms: Room[]
+  pending: Activity[]
+  templates?: EvaluationTemplate[]
+  attempts?: StudentAttempt[]
+  onNavigate: (view: View) => void
+  onSelect: (activity: Activity) => void
+  firstName: string
+  todayLabel: string
+}) {
+  const [selectedFormat, setSelectedFormat] = useState<FormatCatalogItem | null>(null)
+  const [tipIndex] = useState<number>(() => {
+    try {
+      const cached = sessionStorage.getItem('edueval-session-tip')
+      if (cached !== null) {
+        const parsed = parseInt(cached, 10)
+        if (!isNaN(parsed) && parsed >= 0 && parsed < PEDAGOGICAL_TIPS.length) {
+          return parsed
+        }
+      }
+      const randomIndex = Math.floor(Math.random() * PEDAGOGICAL_TIPS.length)
+      sessionStorage.setItem('edueval-session-tip', String(randomIndex))
+      return randomIndex
+    } catch {
+      return 0
+    }
+  })
+
+  const hour = new Date().getHours()
+  const greeting = hour >= 5 && hour < 12 ? 'Buenos días' : hour >= 12 && hour < 19 ? 'Buenas tardes' : 'Buenas noches'
+
+  const activeRooms = rooms.filter((r) => !['finished', 'archived'].includes(r.status))
+  const recentRooms = rooms.slice(-3).reverse()
+
+  const activeFormats = FORMAT_CATALOG.filter((f) => f.status === 'active')
+  const upcomingFormats = FORMAT_CATALOG.filter((f) => f.status === 'upcoming')
+
+  return (
+    <>
+      <PageIntro
+        eyebrow={`${todayLabel.toUpperCase()} · PANEL DOCENTE`}
+        title={`${greeting}, ${firstName}`}
+        description="Bienvenido a tu espacio de evaluación activa y formativa."
+        action={
+          <button className="primary-button" onClick={() => onNavigate('content')}>
+            ＋ Nuevo contenido
+          </button>
+        }
+      />
+
+      <section className="metric-grid">
+        <Metric
+          icon="◈"
+          value={templates.length}
+          label="Contenidos preparados"
+          trend="Plantillas listas para evaluar"
+          tone="mint"
+        />
+        <Metric
+          icon="⌘"
+          value={activeRooms.length}
+          label="Salas activas"
+          trend={activeRooms.length === 1 ? '1 sala en espera o curso' : `${activeRooms.length} en espera o curso`}
+          tone="lavender"
+        />
+        <Metric
+          icon="✓"
+          value={attempts.length}
+          label="Evaluaciones realizadas"
+          trend="Privadas en Resultados"
+          tone="peach"
+        />
+      </section>
+
+      <div className="dashboard-grid">
+        <section className="panel activity-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Actividad de tus salas</h2>
+              <p>Lo que está pasando en tus clases.</p>
+            </div>
+            <button className="text-button" onClick={() => onNavigate('rooms')}>
+              Ver salas →
+            </button>
+          </div>
+
+          {recentRooms.length ? (
+            recentRooms.map((room) => {
+              const isClosed = ['finished', 'archived'].includes(room.status)
+              return (
+                <div className="activity-row" key={room.id}>
+                  <span className={`row-icon ${isClosed ? 'check' : 'room'}`}>
+                    {isClosed ? '✓' : '⌘'}
+                  </span>
+                  <div>
+                    <b>{room.name}</b>
+                    <small>
+                      {roomStatusLabel(room.status)} · código <b>{room.code}</b> · {room.questionCount} preguntas
+                    </small>
+                  </div>
+                  {isClosed ? (
+                    <button
+                      type="button"
+                      className="text-button btn-small"
+                      onClick={() => onNavigate('results')}
+                    >
+                      Resultados →
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="outline-button btn-small"
+                      onClick={() => onNavigate('rooms')}
+                    >
+                      Ir a sala →
+                    </button>
+                  )}
+                </div>
+              )
+            })
+          ) : (
+            <div className="empty-state-mini">
+              <span>⌘</span>
+              <p>Aún no has abierto salas. Cuando crees una evaluación en vivo, verás su estado aquí.</p>
+              <button className="text-button" onClick={() => onNavigate('rooms')}>
+                Configurar una sala →
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="panel friendly-tip-panel">
+          <div className="friendly-tip-head">
+            <div className="friendly-tip-badge-wrap">
+              <span className="friendly-tip-spark-anim">
+                <IconSparkMascot size={28} />
+              </span>
+              <div>
+                <p className="eyebrow friendly-eyebrow">CONSEJO DEL DÍA</p>
+                <h3 className="friendly-tip-title">Pistas para tu clase</h3>
+              </div>
+            </div>
+          </div>
+          <div className="friendly-tip-bubble">
+            <span className="friendly-quote-open" aria-hidden="true">“</span>
+            <p className="friendly-tip-text">{PEDAGOGICAL_TIPS[tipIndex]}</p>
+            <span className="friendly-quote-close" aria-hidden="true">”</span>
+          </div>
+        </section>
+      </div>
+
+      <section className="section-block formats-catalog-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">CATÁLOGO EDUCATIVO</p>
+            <h2>Formatos de evaluación formativa</h2>
+            <p className="section-subtitle">
+              Conoce los tipos de razonamiento que puedes activar en tus estudiantes.
+            </p>
+          </div>
+        </div>
+
+        <div className="formats-catalog-grid">
+          {activeFormats.map((item) => (
+            <article key={item.id} className="format-catalog-card active">
+              <div className="format-catalog-card-head">
+                <span className="format-catalog-icon">{item.icon}</span>
+                <span className="format-badge active">{item.badge}</span>
+              </div>
+              <h3>{item.title}</h3>
+              <p>{item.subtitle}</p>
+              <div className="format-catalog-card-foot">
+                <button
+                  type="button"
+                  className="outline-button btn-small"
+                  onClick={() => setSelectedFormat(item)}
+                >
+                  Descripción
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="upcoming-formats-heading">
+          <div>
+            <p className="eyebrow">HOJA DE RUTA PEDAGÓGICA</p>
+            <h3>Próximos formatos formativos</h3>
+            <p className="section-subtitle">
+              Formatos en preparación hacia la suite de 21 actividades de evaluación activa.
+            </p>
+          </div>
+        </div>
+
+        <div className="formats-catalog-grid upcoming-grid">
+          {upcomingFormats.map((item) => (
+            <article key={item.id} className="format-catalog-card upcoming">
+              <div className="format-catalog-card-head">
+                <span className="format-catalog-icon">{item.icon}</span>
+                <span className="format-badge upcoming">{item.badge}</span>
+              </div>
+              <h3>{item.title}</h3>
+              <p>{item.subtitle}</p>
+              <div className="format-catalog-card-foot">
+                <button
+                  type="button"
+                  className="outline-button btn-small"
+                  onClick={() => setSelectedFormat(item)}
+                >
+                  Descripción
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {selectedFormat && (
+        <FormatDescriptionModal
+          format={selectedFormat}
+          onClose={() => setSelectedFormat(null)}
+        />
+      )}
+    </>
+  )
+}
+
+function FormatDescriptionModal({
+  format,
+  onClose,
+}: {
+  format: FormatCatalogItem
+  onClose: () => void
+}) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="format-modal-title">
+      <div className="modal-card format-desc-modal">
+        <div className="modal-head">
+          <div>
+            <div className="format-modal-eyebrow-wrap">
+              <span className="modal-format-icon">{format.icon}</span>
+              <span className={`format-badge ${format.status}`}>{format.badge}</span>
+            </div>
+            <h2 id="format-modal-title">{format.title}</h2>
+            <p className="modal-subtitle">{format.subtitle}</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Cerrar descripción">
+            ×
+          </button>
+        </div>
+
+        <div className="format-desc-body">
+          <section className="format-desc-block">
+            <b>🎯 ¿Qué habilidad evalúa?</b>
+            <p>{format.evaluates}</p>
+          </section>
+
+          <section className="format-desc-block">
+            <b>📱 ¿Cómo lo vive el estudiante?</b>
+            <p>{format.studentExperience}</p>
+          </section>
+
+          <section className="format-desc-block">
+            <b>📝 ¿Qué requiere el contenido?</b>
+            <p>{format.contentRequirements}</p>
+          </section>
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="primary-button" onClick={onClose}>
+            Entendido
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function Metric({ icon, value, label, trend, tone }: { icon: string; value: number | string; label: string; trend: string; tone: string }) {
   return (
@@ -1753,35 +2368,114 @@ function ActivityCard({ activity, onOpen }: { activity: Activity; onOpen?: () =>
 
 function ActivityPreview({ activity, onClose, onDelete }: { activity: Activity; onClose: () => void; onDelete?: () => void }) { const reusable = activity.status === 'published'; return <div className="modal-backdrop"><div className="modal-card"><div className="modal-head"><div><p className="eyebrow">VISTA DE ACTIVIDAD</p><h2>{activity.title}</h2><p className="modal-subtitle">{types[activity.type].label} · {activity.topic}</p></div><button type="button" className="icon-button" onClick={onClose}>×</button></div><div className="admin-notice"><span>{reusable ? '✓' : '!'}</span><div><b>{reusable ? 'Lista para reutilizar' : 'Pendiente de publicación'}</b><p>{reusable ? 'Esta actividad puede seleccionarse nuevamente al crear una sala.' : 'Aprueba esta actividad desde Propuestas para incluirla en una nueva sala.'}</p></div></div><p>{activity.prompt}</p>{activity.options?.length ? <div className="activity-check-list">{activity.options.map((option, index) => <div className="activity-check" key={`${activity.id}-option-${index}`}><span className="list-type">{index + 1}</span><span><b>{option}</b></span></div>)}</div> : null}<div className="modal-actions">{onDelete && <button type="button" className="outline-button danger-button" onClick={onDelete}>Eliminar actividad</button>}<button type="button" className="primary-button" onClick={onClose}>Cerrar</button></div></div></div> }
 
-function ContentView({ templates, activities, onCreateTemplate, onCreate, onImport, onSelect, onHome }: { templates: EvaluationTemplate[]; activities: Activity[]; onCreateTemplate: (template: EvaluationTemplate) => void; onCreate: (activity: Activity) => void; onImport: (document: ContentImportDocument) => void; onSelect: (activity: Activity) => void; onHome: () => void }) {
-  const [tab, setTab] = useState<'all' | ActivityType>('all')
-  const [activityDraft, setActivityDraft] = useState<{ type: ActivityType; template: EvaluationTemplate } | null>(null)
-  const [requestedType, setRequestedType] = useState<ActivityType | null>(null)
-  const [showActivityPicker, setShowActivityPicker] = useState(false)
+type ImportPayload =
+  | ContentImportDocumentV1
+  | { version: 2; topic: { title: string; subject: string; objective: string; competency: string; summary: string }; validActivities: Activity[]; activitiesNeedingRepair: ActivityNeedingRepair[] }
+
+function ContentView({
+  templates,
+  activities,
+  onCreateTemplate,
+  onUpdateTemplate,
+  onDeleteTemplate,
+  onCreate,
+  onImport,
+  onSelect,
+  onCreateRoom,
+  onNavigateToProposals,
+  onHome,
+}: {
+  templates: EvaluationTemplate[]
+  activities: Activity[]
+  onCreateTemplate: (template: EvaluationTemplate) => void
+  onUpdateTemplate?: (template: EvaluationTemplate) => void
+  onDeleteTemplate?: (template: EvaluationTemplate) => void
+  onCreate: (activity: Activity) => void
+  onImport: (payload: ImportPayload) => void
+  onSelect: (activity: Activity) => void
+  onCreateRoom?: (activityIds: string[]) => void
+  onNavigateToProposals?: () => void
+  onHome: () => void
+}) {
   const [showTemplateForm, setShowTemplateForm] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<EvaluationTemplate | null>(null)
+  const [activityForTemplate, setActivityForTemplate] = useState<EvaluationTemplate | null>(null)
   const [showJsonImport, setShowJsonImport] = useState(false)
-  const filtered = tab === 'all' ? activities : activities.filter((item) => item.type === tab)
   const hasSavedDraft = Boolean(readStorage<Partial<EvaluationTemplate> | null>('edueval-template-draft', null)?.title || readStorage<Partial<EvaluationTemplate> | null>('edueval-template-draft', null)?.subject)
+  const [savedDraftActive, setSavedDraftActive] = useState(() => hasSavedDraft)
+
+  const discardDraft = () => {
+    if (window.confirm('¿Descartar el borrador de plantilla guardado automáticamente?')) {
+      localStorage.removeItem('edueval-template-draft')
+      setSavedDraftActive(false)
+    }
+  }
+
   return <>
-    <PageIntro eyebrow="BIBLIOTECA DE CONTENIDO" title="Crea experiencias que importan" description="Aprueba una plantilla y EvaluEdu generará las actividades compatibles para evaluar ese contenido." action={<div className="content-actions"><button className="outline-button" onClick={() => setShowJsonImport(true)}>⇧ Importar JSON</button><button className="outline-button" onClick={() => setShowTemplateForm(true)}>＋ Nueva plantilla</button><button className="primary-button" onClick={() => { setRequestedType(null); setShowActivityPicker(true) }}>＋ Nueva actividad</button></div>} />
-    <section className="template-section"><div className="section-heading"><div><p className="eyebrow">MODELO PEDAGÓGICO</p><h2>Plantillas de contenido</h2></div><span className="muted">La fuente de tus actividades</span></div>{hasSavedDraft && <div className="admin-notice"><span>✎</span><div><b>Tienes un borrador pendiente.</b><p>Continúa la plantilla guardada automáticamente para terminarla y aceptarla.</p></div><button className="outline-button" onClick={() => setShowTemplateForm(true)}>Continuar borrador</button></div>}{templates.length ? <div className="template-list">{templates.map((template) => <TemplateCard key={template.id} template={template} />)}</div> : <div className="template-empty"><span>◎</span><div><b>Aún no tienes una plantilla estructurada</b><p>Define objetivos, conceptos, situaciones y procesos para que EvaluEdu pueda habilitar los formatos adecuados.</p></div><button className="outline-button" onClick={() => setShowTemplateForm(true)}>Crear la primera</button></div>}</section>
-    <div className="type-grid">{Object.entries(types).map(([key, value]) => <button key={key} className="type-tile" onClick={() => { setTab(key as ActivityType); setRequestedType(key as ActivityType); setShowActivityPicker(true) }}><span>{value.icon}</span><b>{value.label}</b><small>{value.description}</small></button>)}</div>
-    <div className="library-toolbar"><div className="tabs"><button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>Todas <span>{activities.length}</span></button>{Object.entries(types).slice(0, 3).map(([key, value]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key as ActivityType)}>{value.label}</button>)}</div><span className="muted">Guardado local automático</span></div>
-    {filtered.length ? <div className="activity-list">{filtered.map((activity) => <button className="activity-list-row" key={activity.id} onClick={() => onSelect(activity)}><span className={`list-type type-${activity.type}`}>{types[activity.type].icon}</span><span className="list-copy"><b>{activity.title}</b><small>{types[activity.type].label} · {activity.topic}</small></span><span className={`tag ${activity.status}`}>{activity.status === 'published' ? 'Publicada' : activity.status === 'pending' ? 'Por revisar' : 'Borrador'}</span><span className="chevron">›</span></button>)}</div> : <div className="empty-state"><span>◈</span><h2>Aún no tienes actividades</h2><p>Crea tu primera plantilla para generar actividades reutilizables en tus salas.</p><button className="primary-button" onClick={() => setShowTemplateForm(true)}>Crear mi primera plantilla</button></div>}
+    <PageIntro eyebrow="BIBLIOTECA DE CONTENIDO" title="Crea experiencias que importan" description="Estructura tus contenidos o impórtalos; EvaluEdu generará las actividades compatibles para evaluar ese contenido." action={<div className="content-actions"><button className="outline-button" onClick={() => setShowJsonImport(true)}>⇧ Importar JSON</button><button className="primary-button" onClick={() => setShowTemplateForm(true)}>＋ Nueva plantilla</button></div>} />
+    <section className="template-section">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">MODELO PEDAGÓGICO</p>
+          <h2>Plantillas de contenido</h2>
+        </div>
+        <span className="muted">La fuente de tus actividades</span>
+      </div>
+      {savedDraftActive && (
+        <div className="admin-notice">
+          <span>✎</span>
+          <div>
+            <b>Tienes un borrador pendiente.</b>
+            <p>Continúa la plantilla guardada automáticamente para terminarla y aceptarla.</p>
+          </div>
+          <div className="draft-notice-actions">
+            <button className="outline-button" onClick={() => setShowTemplateForm(true)}>Continuar borrador</button>
+            <button className="text-button danger-text-button" onClick={discardDraft} title="Eliminar el borrador guardado">Descartar borrador</button>
+          </div>
+        </div>
+      )}
+      {templates.length ? (
+        <div className="template-list">
+          {templates.map((template) => (
+            <TemplateCard
+              key={template.id}
+              template={template}
+              activities={activities}
+              onCreateRoom={onCreateRoom}
+              onNavigateToProposals={onNavigateToProposals}
+              onEditTemplate={() => setEditingTemplate(template)}
+              onDeleteTemplate={() => onDeleteTemplate?.(template)}
+              onAddActivity={() => setActivityForTemplate(template)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="template-empty">
+          <span>◎</span>
+          <div>
+            <b>Aún no tienes una plantilla estructurada</b>
+            <p>Define objetivos, conceptos, situaciones y procesos para que EvaluEdu pueda habilitar los formatos adecuados.</p>
+          </div>
+          <button className="outline-button" onClick={() => setShowTemplateForm(true)}>Crear la primera</button>
+        </div>
+      )}
+    </section>
     {showTemplateForm && <TemplateBuilder onCancel={() => setShowTemplateForm(false)} onSave={(template) => { onCreateTemplate(template); setShowTemplateForm(false) }} />}
-    {showJsonImport && <JsonImportModal onCancel={() => setShowJsonImport(false)} onImport={(document) => { onImport(document); setShowJsonImport(false) }} />}
-    {showActivityPicker && <TemplateActivityPicker templates={templates} requestedType={requestedType} onCancel={() => setShowActivityPicker(false)} onSelect={(template, type) => { setShowActivityPicker(false); setActivityDraft({ template, type }) }} />}
-    {activityDraft && <ActivityForm initialType={activityDraft.type} template={activityDraft.template} onCancel={() => setActivityDraft(null)} onSave={(activity) => { onCreate(activity); setActivityDraft(null) }} />}
+    {editingTemplate && <TemplateBuilder initialTemplate={editingTemplate} onCancel={() => setEditingTemplate(null)} onSave={(template) => { onUpdateTemplate?.(template); setEditingTemplate(null) }} />}
+    {showJsonImport && <JsonImportModal onCancel={() => setShowJsonImport(false)} onImport={(payload) => { onImport(payload); setShowJsonImport(false) }} />}
+    {activityForTemplate && <ActivityForm initialType="singleChoice" template={activityForTemplate} onCancel={() => setActivityForTemplate(null)} onSave={(activity) => { onCreate(activity); setActivityForTemplate(null) }} />}
   </>
 }
 
-function JsonImportModal({ onCancel, onImport }: { onCancel: () => void; onImport: (document: ContentImportDocument) => void }) {
+function JsonImportModal({ onCancel, onImport }: { onCancel: () => void; onImport: (documentOrPayload: ImportPayload) => void }) {
   const [raw, setRaw] = useState('')
   const [fileName, setFileName] = useState('')
   const [copyStatus, setCopyStatus] = useState('Copiar prompt oficial')
   const [result, setResult] = useState<ReturnType<typeof parseContentImport> | null>(null)
   const validResult = result?.ok ? result : null
   const compatibleEntries = validResult ? Object.entries(validResult.compatibility).filter(([, item]) => item.available) : []
+  const titleText = validResult ? (validResult.version === 2 ? validResult.topic.title : validResult.document.content.title) : ''
+  const schemaVersion = validResult ? validResult.version : 2
   const readFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -1801,7 +2495,14 @@ function JsonImportModal({ onCancel, onImport }: { onCancel: () => void; onImpor
       setCopyStatus('Selecciona y copia el prompt manualmente')
     }
   }
-  return <div className="modal-backdrop"><div className="modal-card json-import-modal"><div className="modal-head"><div><p className="eyebrow">IMPORTACIÓN CONTROLADA</p><h2>Importar contenido JSON</h2><p className="modal-subtitle">EduEval no genera contenido con IA: valida el archivo, lo convierte en una plantilla interna y propone actividades para revisión docente.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="admin-notice"><span>i</span><div><b>Usa el prompt oficial con tu IA externa.</b><p>El prompt está bloqueado en modo solo lectura. EduEval no confía en el prompt: valida siempre el JSON recibido y rechaza cualquier campo o estructura no autorizada.</p></div></div><details className="import-prompt-help"><summary>Ver prompt oficial del docente · solo lectura</summary><textarea className="import-prompt-readonly" value={OFFICIAL_IMPORT_PROMPT} readOnly rows={22} aria-label="Prompt oficial de importación, solo lectura" /><button type="button" className="outline-button" onClick={() => void copyPrompt()}>{copyStatus}</button></details><label>Seleccionar archivo JSON<input type="file" accept="application/json,.json" onChange={readFile} /></label>{fileName && <small className="field-hint">Archivo seleccionado: {fileName}</small>}<label>Pegar JSON<textarea value={raw} onChange={(event) => { setRaw(event.target.value); setResult(null) }} rows={10} placeholder={'{\n  "schema": "edueval.content",\n  "version": 1,\n  "content": { ... }\n}'} /></label><div className="modal-actions import-actions"><button type="button" className="outline-button" onClick={() => setResult(parseContentImport(raw))} disabled={!raw.trim()}>Validar JSON</button></div>{result && !result.ok && <div className="form-error import-errors"><b>No se puede importar todavía.</b><ul>{result.issues.map((issue, index) => <li key={`${issue.path}-${index}`}><code>{issue.path}</code> · {issue.message}</li>)}</ul></div>}{validResult && <section className="import-validation"><div className="admin-notice success"><span>✓</span><div><b>JSON válido · esquema {validResult.document.version}</b><p>{validResult.document.content.title} · {compatibleEntries.length} formato{compatibleEntries.length === 1 ? '' : 's'} compatible{compatibleEntries.length === 1 ? '' : 's'} detectado{compatibleEntries.length === 1 ? '' : 's'}.</p></div></div><div className="compatibility-grid">{Object.entries(validResult.compatibility).map(([key, item]) => <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}><span>{item.available ? '✓' : '×'}</span><b>{types[key as ActivityType].label}</b><small>{item.available ? 'Se propondrá para revisión' : item.reason}</small></div>)}</div>{!compatibleEntries.length && <div className="form-error">El esquema es válido, pero falta información para detectar una actividad compatible. Completa conceptos, situaciones, pasos o categorías y vuelve a validar.</div>}</section>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="primary-button" disabled={!validResult || !compatibleEntries.length} onClick={() => validResult && onImport(validResult.document)}>Aceptar e ir a propuestas →</button></div></div></div>
+  return <div className="modal-backdrop"><div className="modal-card json-import-modal"><div className="modal-head"><div><p className="eyebrow">IMPORTACIÓN CONTROLADA</p><h2>Importar contenido JSON</h2><p className="modal-subtitle">EvaluEdu no genera contenido con IA: valida el archivo, lo convierte en una plantilla interna y propone actividades para revisión docente.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="admin-notice"><span>i</span><div><b>Usa el prompt oficial con tu IA externa.</b><p>El prompt está bloqueado en modo solo lectura. EvaluEdu no confía en el prompt: valida siempre el JSON recibido y rechaza cualquier campo o estructura no autorizada.</p></div></div><details className="import-prompt-help"><summary>Ver prompt oficial del docente · solo lectura</summary><textarea className="import-prompt-readonly" value={OFFICIAL_IMPORT_PROMPT} readOnly rows={22} aria-label="Prompt oficial de importación, solo lectura" /><button type="button" className="outline-button" onClick={() => void copyPrompt()}>{copyStatus}</button></details><label>Seleccionar archivo JSON<input type="file" accept="application/json,.json" onChange={readFile} /></label>{fileName && <small className="field-hint">Archivo seleccionado: {fileName}</small>}<label>Pegar JSON<textarea value={raw} onChange={(event) => { setRaw(event.target.value); setResult(null) }} rows={10} placeholder={'{\n  "schema": "edueval.content",\n  "version": 2,\n  "topic": { ... },\n  "activities": [ ... ]\n}'} /></label><div className="modal-actions import-actions"><button type="button" className="outline-button" onClick={() => setResult(parseContentImport(raw))} disabled={!raw.trim()}>Validar JSON</button></div>{result && !result.ok && <div className="form-error import-errors"><b>No se puede importar todavía.</b><ul>{result.issues.map((issue, index) => <li key={`${issue.path}-${index}`}><code>{issue.path}</code> · {issue.message}</li>)}</ul></div>}{validResult && <section className="import-validation"><div className="admin-notice success"><span>✓</span><div><b>JSON válido · esquema v{schemaVersion}</b><p>{titleText} · {compatibleEntries.length} formato{compatibleEntries.length === 1 ? '' : 's'} compatible{compatibleEntries.length === 1 ? '' : 's'} detectado{compatibleEntries.length === 1 ? '' : 's'}.</p></div></div><div className="compatibility-grid">{Object.entries(validResult.compatibility).map(([key, item]) => <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}><span>{item.available ? '✓' : '×'}</span><b>{types[key as ActivityType].label}</b><small>{item.available ? 'Se propondrá para revisión' : item.reason}</small></div>)}</div>{!compatibleEntries.length && <div className="form-error">El esquema es válido, pero falta información para detectar una actividad compatible. Completa conceptos, situaciones, pasos o categorías y vuelve a validar.</div>}</section>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="primary-button" disabled={!validResult || !compatibleEntries.length} onClick={() => {
+    if (!validResult) return
+    if (validResult.version === 2) {
+      onImport({ version: 2, topic: validResult.topic, validActivities: validResult.validActivities, activitiesNeedingRepair: validResult.activitiesNeedingRepair })
+    } else {
+      onImport(validResult.document)
+    }
+  }}>Aceptar e ir a propuestas →</button></div></div></div>
 }
 
 function compatibility(template: EvaluationTemplate): Record<ActivityType, { available: boolean; reason: string }> {
@@ -1812,28 +2513,420 @@ function buildActivitiesFromTemplate(template: EvaluationTemplate): Activity[] {
   const matches = compatibility(template)
   const concepts = template.concepts.filter((item) => item.name.trim() && item.definition.trim())
   const situations = template.situations.filter((item) => item.title.trim() && item.context.trim() && item.decision.trim() && item.consequence.trim())
-  const steps = template.processSteps.filter(Boolean)
-  const categories = template.categories.filter(Boolean)
+  const steps = template.processSteps.map((s) => s.trim()).filter(Boolean)
+  const categories = template.categories.map((c) => c.trim()).filter(Boolean)
   const firstSituation = situations[0]
-  const conceptOptions = concepts.map((item) => item.name)
-  const definitions = concepts.map((item) => `${item.name} → ${item.definition}`)
-  const generated = (type: ActivityType, title: string, prompt: string, options: string[], answer: string | string[], feedback: string): Activity => ({ id: `a${Date.now()}-${type}`, templateId: template.id, title, type, topic: template.subject, difficulty: template.difficulty, prompt, options, answer, feedback, status: 'published' })
   const activities: Activity[] = []
-  if (matches.trueFalse.available) activities.push(generated('trueFalse', `${template.title} · Comprueba`, concepts[0] ? `${concepts[0].name}: ${concepts[0].definition}` : firstSituation.context, ['Verdadero', 'Falso'], 'Verdadero', 'Relaciona tu respuesta con el objetivo y revisa la evidencia del contenido.'))
-  if (matches.singleChoice.available) activities.push(generated('singleChoice', `${template.title} · Elige`, 'Selecciona la opción que mejor representa el contenido aprendido.', conceptOptions.length ? [...conceptOptions, 'Ninguna de las anteriores'] : [firstSituation?.decision ?? 'Revisar el contenido'], conceptOptions[0] ?? firstSituation?.decision ?? '', 'Explica por qué esa opción se relaciona con el objetivo de aprendizaje.'))
-  if (matches.matching.available) activities.push(generated('matching', `${template.title} · Relaciona`, 'Relaciona cada concepto con su definición.', definitions, definitions, 'Las relaciones se construyen a partir de las definiciones de la plantilla.'))
-  if (matches.sorting.available) activities.push(generated('sorting', `${template.title} · Clasifica`, 'Clasifica los elementos del contenido en las categorías definidas.', conceptOptions, categories, 'La clasificación permite observar cómo se organiza el contenido.'))
-  if (matches.ordering.available) activities.push(generated('ordering', `${template.title} · Ordena`, 'Ordena los pasos del proceso según la secuencia del contenido.', steps, steps, 'La secuencia debe seguir la lógica del proceso trabajado.'))
-  if (matches.scenario.available && firstSituation) activities.push(generated('scenario', `${template.title} · Decisión`, firstSituation.context, [firstSituation.decision, 'Analizar otra alternativa antes de decidir', 'Ignorar las consecuencias'], firstSituation.decision, firstSituation.consequence))
+
+  // 1. FALSO / VERDADERO v1.2
+  if (matches.trueFalse.available && concepts.length > 0) {
+    const c = concepts[0]
+    const statement = `${c.name}: ${c.definition}`
+    const hint = `Revisa los principios y definiciones clave abordados en ${template.title}.`
+    const explanation = `El contenido formativo establece que ${c.name} se define como: ${c.definition}`
+    activities.push({
+      id: `act-${Date.now()}-tf1`,
+      templateId: template.id,
+      title: `${template.title} · Comprueba`,
+      type: 'trueFalse',
+      topic: template.subject,
+      difficulty: template.difficulty,
+      prompt: statement,
+      options: ['Verdadero', 'Falso'],
+      answer: 'Verdadero',
+      feedback: hint,
+      details: {
+        trueFalse: {
+          statement,
+          correct: true,
+          hint,
+          explanation,
+        },
+      },
+      status: 'published',
+    })
+
+    // Si hay un segundo concepto, generamos una segunda variante de contraste con clave Falso
+    if (concepts.length >= 2) {
+      const c1 = concepts[0]
+      const c2 = concepts[1]
+      const falseStatement = `${c1.name} se caracteriza principalmente por ${c2.definition}`
+      const falseHint = `Compara las características distintivas entre ${c1.name} y los demás conceptos del tema.`
+      const falseExplanation = `La afirmación es falsa porque esa definición corresponde a ${c2.name}, no a ${c1.name}.`
+      activities.push({
+        id: `act-${Date.now()}-tf2`,
+        templateId: template.id,
+        title: `${template.title} · Discrimina`,
+        type: 'trueFalse',
+        topic: template.subject,
+        difficulty: template.difficulty,
+        prompt: falseStatement,
+        options: ['Verdadero', 'Falso'],
+        answer: 'Falso',
+        feedback: falseHint,
+        details: {
+          trueFalse: {
+            statement: falseStatement,
+            correct: false,
+            hint: falseHint,
+            explanation: falseExplanation,
+          },
+        },
+        status: 'published',
+      })
+    }
+  }
+
+  // 2. SELECCIÓN ÚNICA v1.2
+  if (matches.singleChoice.available && concepts.length > 0) {
+    const target = concepts[0]
+    const prompt = `¿Cuál de las siguientes opciones define con mayor precisión a "${target.name}"?`
+    const hint = `Relaciona el término con su propósito central explicado en el contenido.`
+    const explanation = `La opción correcta corresponde a la definición estructurada de ${target.name}.`
+
+    const options: ChoiceOption[] = [
+      { id: makeEditorId('choice-'), label: target.definition, correct: true },
+    ]
+    if (concepts.length > 1) {
+      for (let i = 1; i < Math.min(concepts.length, 4); i++) {
+        options.push({ id: makeEditorId('choice-'), label: concepts[i].definition, correct: false })
+      }
+    }
+    if (options.length < 3) {
+      options.push({ id: makeEditorId('choice-'), label: 'Se enfoca exclusivamente en la gestión sin considerar los factores del entorno.', correct: false })
+    }
+    if (options.length < 3) {
+      options.push({ id: makeEditorId('choice-'), label: 'Sustituye la evaluación sistemática por intervenciones no verificables.', correct: false })
+    }
+    const shuffledOptions = shuffleItems(options)
+
+    activities.push({
+      id: `act-${Date.now()}-sc`,
+      templateId: template.id,
+      title: `${template.title} · Elige`,
+      type: 'singleChoice',
+      topic: template.subject,
+      difficulty: template.difficulty,
+      prompt,
+      options: shuffledOptions.map((o) => o.label),
+      answer: target.definition,
+      feedback: hint,
+      details: {
+        singleChoice: {
+          options: shuffledOptions,
+          hint,
+          explanation,
+        },
+      },
+      status: 'published',
+    })
+  }
+
+  // 3. ASOCIACIÓN (MATCHING) v1.2
+  if (matches.matching.available && concepts.length >= 2) {
+    const prompt = 'Relaciona cada concepto con su definición correspondiente.'
+    const hint = 'Distingue cada concepto de su función o definición específica en el tema.'
+    const cleanPairs: MatchingPair[] = concepts.slice(0, 5).map((c) => ({
+      id: makeEditorId('pair-'),
+      left: c.name,
+      right: c.definition,
+    }))
+    const options = cleanPairs.map((p) => `${p.left} → ${p.right}`)
+
+    activities.push({
+      id: `act-${Date.now()}-mat`,
+      templateId: template.id,
+      title: `${template.title} · Relaciona`,
+      type: 'matching',
+      topic: template.subject,
+      difficulty: template.difficulty,
+      prompt,
+      options,
+      answer: options,
+      feedback: hint,
+      details: {
+        matching: {
+          pairs: cleanPairs,
+          hint,
+          explanation: 'Correspondencias directas basadas en las definiciones de la plantilla.',
+        },
+      },
+      status: 'published',
+    })
+  }
+
+  // 4. CLASIFICACIÓN (SORTING) v1.2
+  if (matches.sorting.available && categories.length >= 2 && concepts.length >= 2) {
+    const prompt = 'Clasifica los siguientes elementos en la categoría que les corresponde.'
+    const hint = 'Analiza a qué categoría o grupo conceptual pertenece cada elemento.'
+    const cleanCategories = categories.slice(0, 4)
+    const cleanItems: SortingItem[] = concepts.slice(0, 8).map((c, idx) => ({
+      id: makeEditorId('sort-'),
+      label: c.name,
+      category: cleanCategories[idx % cleanCategories.length],
+    }))
+
+    activities.push({
+      id: `act-${Date.now()}-sort`,
+      templateId: template.id,
+      title: `${template.title} · Clasifica`,
+      type: 'sorting',
+      topic: template.subject,
+      difficulty: template.difficulty,
+      prompt,
+      options: cleanItems.map((item) => item.label),
+      answer: cleanItems.map((item) => item.category),
+      feedback: hint,
+      details: {
+        sorting: {
+          categories: cleanCategories,
+          items: cleanItems,
+          hint,
+          explanation: 'Clasificación basada en las categorías y conceptos del tema.',
+        },
+      },
+      status: 'published',
+    })
+  }
+
+  // 5. ORDENAMIENTO (ORDERING) v1.2
+  if (matches.ordering.available && steps.length >= 2) {
+    const prompt = 'Ordena los pasos del proceso según la secuencia pedagógica del contenido.'
+    const hint = 'Recuerda cuál es el paso inicial y cómo progresa ordenadamente la secuencia.'
+    const cleanSteps = steps.slice(0, 6)
+
+    activities.push({
+      id: `act-${Date.now()}-ord`,
+      templateId: template.id,
+      title: `${template.title} · Ordena`,
+      type: 'ordering',
+      topic: template.subject,
+      difficulty: template.difficulty,
+      prompt,
+      options: cleanSteps,
+      answer: cleanSteps,
+      feedback: hint,
+      details: {
+        ordering: {
+          steps: cleanSteps,
+          hint,
+          explanation: 'Secuencia basada en el orden de las etapas de la plantilla.',
+        },
+      },
+      status: 'published',
+    })
+  }
+
+  // 6. ESCENARIO DE DECISIONES v1.2
+  if (matches.scenario.available && firstSituation) {
+    const prompt = firstSituation.context
+    const hint = 'Evalúa las consecuencias directas de cada decisión antes de confirmar tu respuesta.'
+    const explanation = firstSituation.consequence || 'La decisión recomendada previene el riesgo y asegura la sostenibilidad del proceso.'
+    const stages: ScenarioStage[] = [
+      {
+        id: makeEditorId('stage-'),
+        title: firstSituation.title || 'Decisión principal',
+        prompt: firstSituation.decision || '¿Qué acción debe tomarse primero?',
+        options: [
+          {
+            id: makeEditorId('opt-'),
+            text: firstSituation.decision,
+            consequence: firstSituation.consequence || 'Se implementa la solución esperada reduciendo el impacto negativo.',
+            feedback: 'Decisión fundamentada en la evidencia del contenido.',
+            recommended: true,
+          },
+          {
+            id: makeEditorId('opt-'),
+            text: 'Postergar la decisión hasta obtener consenso unánime',
+            consequence: 'El problema puede escalar y generar consecuencias de mayor gravedad en la comunidad.',
+            feedback: 'En situaciones críticas la dilación injustificada incrementa el riesgo.',
+            recommended: false,
+          },
+          {
+            id: makeEditorId('opt-'),
+            text: 'Delegar la responsabilidad sin supervisión ni protocolo',
+            consequence: 'Se pierde trazabilidad y no se garantiza el cumplimiento de los estándares.',
+            feedback: 'La toma de decisiones requiere seguimiento estructurado.',
+            recommended: false,
+          },
+        ],
+      },
+    ]
+
+    activities.push({
+      id: `act-${Date.now()}-scen`,
+      templateId: template.id,
+      title: `${template.title} · Decisión`,
+      type: 'scenario',
+      topic: template.subject,
+      difficulty: template.difficulty,
+      prompt,
+      options: stages[0].options.map((opt) => opt.text),
+      answer: firstSituation.decision,
+      feedback: hint,
+      details: {
+        scenario: {
+          situation: firstSituation.context,
+          stages,
+          hint,
+          explanation,
+        },
+      },
+      status: 'published',
+    })
+  }
+
   return activities
 }
 
-function TemplateActivityPicker({ templates, requestedType, onCancel, onSelect }: { templates: EvaluationTemplate[]; requestedType: ActivityType | null; onCancel: () => void; onSelect: (template: EvaluationTemplate, type: ActivityType) => void }) {
-  const accepted = templates.filter((template) => template.status === 'accepted')
-  return <div className="modal-backdrop"><div className="modal-card activity-picker"><div className="modal-head"><div><p className="eyebrow">CREAR DESDE CONTENIDO</p><h2>Elige una plantilla</h2><p className="modal-subtitle">La actividad se construirá a partir del contenido que ya aprobaste.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div>{accepted.length ? <div className="picker-list">{accepted.map((template) => { const matches = compatibility(template); const available = Object.entries(types).filter(([key]) => matches[key as ActivityType].available && (!requestedType || key === requestedType)); return <article className="picker-card" key={template.id}><div><p className="eyebrow">PLANTILLA ACEPTADA</p><h3>{template.title}</h3><small>{template.subject}</small></div><div className="picker-types">{available.length ? available.map(([key, value]) => <button key={key} className="picker-type" onClick={() => onSelect(template, key as ActivityType)}><span>{value.icon}</span><b>{value.label}</b><small>Usar este contenido</small></button>) : <div className="picker-unavailable">{requestedType ? `Esta plantilla todavía no tiene información suficiente para ${types[requestedType].label.toLowerCase()}.` : 'Esta plantilla no tiene formatos compatibles.'}</div>}</div></article> })}</div> : <div className="empty-state"><span>◎</span><h2>Primero acepta una plantilla</h2><p>Las actividades se crean desde una plantilla de contenido aprobada.</p></div>}<div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button></div></div></div>
-}
+function TemplateCard({
+  template,
+  activities,
+  onCreateRoom,
+  onNavigateToProposals,
+  onEditTemplate,
+  onDeleteTemplate,
+  onAddActivity,
+}: {
+  template: EvaluationTemplate
+  activities: Activity[]
+  onCreateRoom?: (activityIds: string[]) => void
+  onNavigateToProposals?: () => void
+  onEditTemplate?: () => void
+  onDeleteTemplate?: () => void
+  onAddActivity?: () => void
+}) {
+  const matches = compatibility(template)
+  const imported = template.source === 'json'
+  const templateActivities = activities.filter((item) => item.templateId === template.id)
+  const publishedActivities = templateActivities.filter((item) => item.status === 'published')
+  const pendingActivities = templateActivities.filter((item) => item.status === 'pending')
 
-function TemplateCard({ template }: { template: EvaluationTemplate }) { const matches = compatibility(template); const imported = template.source === 'json'; return <article className="template-card"><div className="template-card-head"><div><p className="eyebrow">{imported ? 'IMPORTADO · REVISIÓN PENDIENTE' : template.status === 'accepted' ? 'CONTENIDO ACEPTADO' : 'BORRADOR'}</p><h3>{template.title || 'Sin título'}</h3><p>{template.subject || 'Sin asignatura'}</p></div><span className={`tag ${template.status === 'accepted' ? 'published' : 'draft'}`}>{imported ? 'Importado' : template.status === 'accepted' ? 'Aceptada' : 'Borrador'}</span></div><p className="template-description">{template.description || 'Sin descripción todavía.'}</p><div className="template-stats"><span>{template.concepts.length} conceptos</span><span>{template.situations.length} situaciones</span><span>{template.processSteps.length} pasos</span></div>{template.status === 'accepted' && <div className="generated-note">{imported ? '◌ Las actividades compatibles quedaron como propuestas para revisión docente.' : '✓ Las actividades compatibles se crearon automáticamente desde esta plantilla.'}</div>}<div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={`compatibility-item ${item.available ? '' : 'unavailable'}`} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? imported ? 'Propuesta para revisar' : 'Actividad creada' : item.reason}</small></div> })}</div></article> }
+  return (
+    <article className="template-card">
+      <div className="template-card-head">
+        <div>
+          <p className="eyebrow">
+            {imported
+              ? publishedActivities.length > 0
+                ? 'CONTENIDO APROBADO · ' + publishedActivities.length + ' ACTIVIDADES LISTAS'
+                : 'IMPORTADO · ' + (pendingActivities.length > 0 ? pendingActivities.length + ' PENDIENTES' : 'REVISIÓN PENDIENTE')
+              : template.status === 'accepted'
+                ? 'CONTENIDO ACEPTADO'
+                : 'BORRADOR'}
+          </p>
+          <h3>{template.title || 'Sin título'}</h3>
+          <p>{template.subject || 'Sin asignatura'}</p>
+        </div>
+
+        <div className="template-card-top-action">
+          {publishedActivities.length > 0 ? (
+            <button
+              type="button"
+              className="primary-button btn-small"
+              onClick={() => onCreateRoom?.(publishedActivities.map((a) => a.id))}
+              title="Crear una sala con las actividades aprobadas de este tema"
+            >
+              ＋ Crear sala
+            </button>
+          ) : pendingActivities.length > 0 ? (
+            <button
+              type="button"
+              className="outline-button btn-small"
+              onClick={onNavigateToProposals}
+              title="Revisar propuestas pendientes"
+            >
+              Ver propuestas ({pendingActivities.length})
+            </button>
+          ) : (
+            <span className={`tag ${template.status === 'accepted' ? 'published' : 'draft'}`}>
+              {template.status === 'accepted' ? 'Aceptada' : 'Borrador'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <p className="template-description">{template.description || 'Sin descripción todavía.'}</p>
+      <div className="template-stats">
+        <span>{publishedActivities.length} actividades listas</span>
+        {pendingActivities.length > 0 && <span>{pendingActivities.length} por revisar</span>}
+        {template.concepts.length > 0 && <span>{template.concepts.length} conceptos</span>}
+        {template.situations.length > 0 && <span>{template.situations.length} situaciones</span>}
+      </div>
+
+      <div className="compatibility-grid">
+        {Object.entries(types).map(([key, value]) => {
+          const actType = key as ActivityType
+          const publishedOfType = publishedActivities.filter((a) => a.type === actType)
+          const pendingOfType = pendingActivities.filter((a) => a.type === actType)
+          const legacyAvailable = matches[actType]?.available
+
+          const hasPublished = publishedOfType.length > 0
+          const hasPending = pendingOfType.length > 0
+
+          let statusClass = 'unavailable'
+          let icon = '×'
+          let detail = matches[actType]?.reason || 'Sin contenido'
+
+          if (hasPublished) {
+            statusClass = 'available active'
+            icon = '✓'
+            detail = `${publishedOfType.length} lista${publishedOfType.length === 1 ? '' : 's'} para evaluar`
+          } else if (hasPending) {
+            statusClass = 'available pending-review'
+            icon = '◌'
+            detail = `${pendingOfType.length} en propuestas`
+          } else if (legacyAvailable) {
+            statusClass = 'available'
+            icon = '✓'
+            detail = 'Compatible con el contenido'
+          }
+
+          return (
+            <div className={`compatibility-item ${statusClass}`} key={key}>
+              <span>{icon}</span>
+              <b>{value.label}</b>
+              <small>{detail}</small>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="template-card-footer">
+        <div className="template-card-meta-info">
+          <span className={`status-dot ${template.status === 'accepted' ? 'published' : 'draft'}`} />
+          <small>{template.status === 'accepted' ? 'Contenido listo para evaluar' : 'Plantilla en borrador'}</small>
+        </div>
+        <div className="template-card-actions">
+          <button
+            type="button"
+            className="outline-button btn-small"
+            onClick={onAddActivity}
+            title="Crear y agregar una actividad manual a este tema"
+          >
+            ＋ Agregar actividad
+          </button>
+          <button
+            type="button"
+            className="outline-button btn-small"
+            onClick={onEditTemplate}
+            title="Editar y ajustar conceptos o campos de esta plantilla"
+          >
+            ✎ Editar plantilla
+          </button>
+          <button
+            type="button"
+            className="outline-button btn-small danger-text-button"
+            onClick={onDeleteTemplate}
+            title="Eliminar esta plantilla y sus actividades asociadas"
+          >
+            🗑 Eliminar
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
 
 
 type TemplateProgress = { percent: number; completed: number; total: number; checks: { label: string; done: boolean }[] }
@@ -1857,8 +2950,8 @@ function TemplatePreview({ template, onClose, onPrint }: { template: EvaluationT
   return <div className="modal-backdrop"><article className="modal-card template-preview printable-template"><div className="modal-head"><div><p className="eyebrow">VISTA PREVIA DE PLANTILLA</p><h2>{template.title || 'Sin título'}</h2><p className="modal-subtitle">{template.subject || 'Sin asignatura'}</p></div><button type="button" className="icon-button no-print" onClick={onClose}>×</button></div><div className="preview-hero"><p>{template.description || 'Sin descripción breve.'}</p><div><b>Objetivo</b><span>{template.objective || 'Pendiente de completar.'}</span></div><div><b>Competencia</b><span>{template.competency || 'No especificada.'}</span></div></div><div className="preview-grid"><section><p className="eyebrow">CONCEPTOS</p>{template.concepts.filter((item) => item.name.trim() || item.definition.trim()).length ? template.concepts.filter((item) => item.name.trim() || item.definition.trim()).map((item) => <div className="preview-item" key={item.id}><b>{item.name || 'Sin nombre'}</b><span>{item.definition || 'Sin definición'}</span>{item.example && <small>Ejemplo: {item.example}</small>}</div>) : <p className="preview-empty">No hay conceptos cargados.</p>}</section><section><p className="eyebrow">SITUACIONES</p>{template.situations.filter((item) => item.title.trim() || item.context.trim()).length ? template.situations.filter((item) => item.title.trim() || item.context.trim()).map((item) => <div className="preview-item" key={item.id}><b>{item.title || 'Sin título'}</b><span>{item.context || 'Sin contexto'}</span><small>Decisión: {item.decision || 'Pendiente'} · Consecuencia: {item.consequence || 'Pendiente'}</small></div>) : <p className="preview-empty">No hay situaciones cargadas.</p>}</section></div><div className="preview-grid"><section><p className="eyebrow">PROCESO</p>{template.processSteps.length ? <ol className="preview-list">{template.processSteps.map((step, index) => <li key={'preview-step-' + index}>{step}</li>)}</ol> : <p className="preview-empty">No hay pasos cargados.</p>}</section><section><p className="eyebrow">CATEGORÍAS</p>{template.categories.length ? <div className="preview-tags">{template.categories.map((category, index) => <span key={'preview-category-' + index}>{category}</span>)}</div> : <p className="preview-empty">No hay categorías cargados.</p>}</section></div><section className="preview-compatibility"><p className="eyebrow">FORMATOS COMPATIBLES</p><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => <div className={'compatibility-item ' + (matches[key as ActivityType].available ? '' : 'unavailable')} key={key}><span>{matches[key as ActivityType].available ? '✓' : '×'}</span><b>{value.label}</b><small>{matches[key as ActivityType].available ? 'Se generará al aceptar' : matches[key as ActivityType].reason}</small></div>)}</div></section><div className="modal-actions no-print"><button type="button" className="outline-button" onClick={onClose}>Volver a editar</button><button type="button" className="primary-button" onClick={onPrint}>Imprimir / guardar PDF</button></div></article></div>
 }
 
-function TemplateBuilder({ onCancel, onSave }: { onCancel: () => void; onSave: (template: EvaluationTemplate) => void }) {
-  const savedDraft = readStorage<Partial<EvaluationTemplate>>('edueval-template-draft', {})
+function TemplateBuilder({ initialTemplate, onCancel, onSave }: { initialTemplate?: EvaluationTemplate; onCancel: () => void; onSave: (template: EvaluationTemplate) => void }) {
+  const savedDraft = initialTemplate ?? readStorage<Partial<EvaluationTemplate>>('edueval-template-draft', {})
   const [title, setTitle] = useState(savedDraft.title ?? 'Nueva plantilla')
   const [subject, setSubject] = useState(savedDraft.subject ?? '')
   const [description, setDescription] = useState(savedDraft.description ?? '')
@@ -1874,27 +2967,50 @@ function TemplateBuilder({ onCancel, onSave }: { onCancel: () => void; onSave: (
   const [showPreview, setShowPreview] = useState(false)
   const processStepList = processSteps.split('\n').map((item) => item.trim()).filter(Boolean)
   const categoryList = categories.split('\n').map((item) => item.trim()).filter(Boolean)
-  const currentTemplate: EvaluationTemplate = { id: 'preview', title, subject, description, objective, competency, difficulty, concepts, situations, processSteps: processStepList, categories: categoryList, status: 'draft', updatedAt: new Date().toISOString() }
+  const currentTemplate: EvaluationTemplate = {
+    id: initialTemplate?.id || 'preview',
+    title,
+    subject,
+    description,
+    objective,
+    competency,
+    difficulty,
+    concepts,
+    situations,
+    processSteps: processStepList,
+    categories: categoryList,
+    status: initialTemplate?.status || 'draft',
+    updatedAt: new Date().toISOString(),
+  }
   const matches = compatibility(currentTemplate)
   const progress = getTemplateProgress(title, subject, objective, concepts, situations, processStepList, categoryList)
 
   useEffect(() => {
-    localStorage.setItem('edueval-template-draft', JSON.stringify(currentTemplate))
-    setAutosaveStatus('Borrador guardado automáticamente')
-    const timer = window.setTimeout(() => setAutosaveStatus(''), 1800)
-    return () => window.clearTimeout(timer)
-  }, [title, subject, description, objective, competency, difficulty, concepts, situations, processSteps, categories])
+    if (!initialTemplate) {
+      localStorage.setItem('edueval-template-draft', JSON.stringify(currentTemplate))
+      setAutosaveStatus('Borrador guardado automáticamente')
+      const timer = window.setTimeout(() => setAutosaveStatus(''), 1800)
+      return () => window.clearTimeout(timer)
+    }
+  }, [title, subject, description, objective, competency, difficulty, concepts, situations, processSteps, categories, initialTemplate])
 
   const handleSave = (status: EvaluationTemplate['status']) => {
     if (!title.trim() || !subject.trim() || !objective.trim()) return setError('Completa título, asignatura y objetivo antes de guardar.')
     if (status === 'accepted' && !Object.values(matches).some((item) => item.available)) return setError('Para aceptar la plantilla, completa al menos un bloque de contenido compatible.')
     setError('')
-    localStorage.removeItem('edueval-template-draft')
-    onSave({ ...currentTemplate, id: '', status, updatedAt: new Date().toISOString() })
+    if (!initialTemplate) {
+      localStorage.removeItem('edueval-template-draft')
+    }
+    onSave({
+      ...currentTemplate,
+      id: initialTemplate?.id || '',
+      status,
+      updatedAt: new Date().toISOString(),
+    })
   }
   const updateConcept = (id: string, key: keyof ContentConcept, value: string) => setConcepts((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item))
   const updateSituation = (id: string, key: keyof ContentSituation, value: string) => setSituations((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item))
-  return <div className="modal-backdrop"><form className="modal-card template-modal" onSubmit={(event) => { event.preventDefault(); handleSave('draft') }}><div className="modal-head"><div><p className="eyebrow">CONSTRUCTOR DE PLANTILLA</p><h2>Estructura tu contenido</h2><p className="modal-subtitle">La plantilla es la fuente; al aprobarla se generan las actividades compatibles.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="template-progress"><div className="template-progress-head"><div><b>Progreso de la plantilla</b><small>{progress.completed} de {progress.total} criterios completos</small></div><strong>{progress.percent}%</strong></div><div className="progress-track"><span style={{ width: progress.percent + '%' }} /></div><div className="progress-checks">{progress.checks.map((check) => <span className={check.done ? 'done' : ''} key={check.label}>{check.done ? '✓' : '○'} {check.label}</span>)}</div></div><div className="autosave-status">{autosaveStatus || 'Los cambios se guardan localmente mientras editas.'}</div><div className="form-grid"><label>Título de la plantilla *<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Asignatura o área *<input required value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Ej. Ciencias naturales" /></label></div><label>Descripción breve<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="¿Qué aprenderá el grupo?" /></label><div className="form-grid"><label>Objetivo de aprendizaje *<textarea required value={objective} onChange={(event) => setObjective(event.target.value)} rows={3} /></label><label>Competencia o capacidad<textarea value={competency} onChange={(event) => setCompetency(event.target.value)} rows={3} /></label></div><label>Respaldo<div className="backup-actions"><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><small>Desde la vista previa puedes imprimir o guardar como PDF.</small></div></label><div className="template-block"><div className="block-heading"><div><p className="eyebrow">CONCEPTOS Y DEFINICIONES</p><b>Ideas que deben comprender</b></div><button type="button" className="text-button" onClick={() => setConcepts((current) => [...current, { id: 'c' + Date.now(), name: '', definition: '', example: '' }])}>＋ Agregar concepto</button></div>{concepts.map((concept) => <div className="repeatable-card" key={concept.id}><div className="repeatable-row"><input aria-label="Nombre del concepto" placeholder="Concepto" value={concept.name} onChange={(event) => updateConcept(concept.id, 'name', event.target.value)} /><button type="button" className="remove-button" onClick={() => setConcepts((current) => current.length > 1 ? current.filter((item) => item.id !== concept.id) : current)}>×</button></div><textarea aria-label="Definición" placeholder="Definición" value={concept.definition} onChange={(event) => updateConcept(concept.id, 'definition', event.target.value)} rows={2} /><input aria-label="Ejemplo" placeholder="Ejemplo o característica" value={concept.example} onChange={(event) => updateConcept(concept.id, 'example', event.target.value)} /></div>)}</div><div className="template-block"><div className="block-heading"><div><p className="eyebrow">SITUACIONES Y CONSECUENCIAS</p><b>Casos para decidir y reflexionar</b></div><button type="button" className="text-button" onClick={() => setSituations((current) => [...current, { id: 's' + Date.now(), title: '', context: '', decision: '', consequence: '' }])}>＋ Agregar situación</button></div>{situations.map((situation) => <div className="repeatable-card" key={situation.id}><div className="repeatable-row"><input aria-label="Título de situación" placeholder="Título del caso" value={situation.title} onChange={(event) => updateSituation(situation.id, 'title', event.target.value)} /><button type="button" className="remove-button" onClick={() => setSituations((current) => current.length > 1 ? current.filter((item) => item.id !== situation.id) : current)}>×</button></div><textarea aria-label="Contexto" placeholder="Contexto de la situación" value={situation.context} onChange={(event) => updateSituation(situation.id, 'context', event.target.value)} rows={2} /><div className="form-grid"><input aria-label="Decisión esperada" placeholder="Decisión o pregunta" value={situation.decision} onChange={(event) => updateSituation(situation.id, 'decision', event.target.value)} /><input aria-label="Consecuencia" placeholder="Consecuencia o feedback" value={situation.consequence} onChange={(event) => updateSituation(situation.id, 'consequence', event.target.value)} /></div></div>)}</div><div className="form-grid"><label>Pasos de un proceso<span className="field-hint">Un paso por línea; habilita ordenamiento desde dos pasos.</span><textarea value={processSteps} onChange={(event) => setProcessSteps(event.target.value)} rows={5} placeholder={'Observar\nAnalizar\nDecidir'} /></label><label>Categorías<span className="field-hint">Una categoría por línea; habilita clasificación.</span><textarea value={categories} onChange={(event) => setCategories(event.target.value)} rows={5} placeholder={'Causa\nConsecuencia'} /></label></div><section className="compatibility-preview"><div className="block-heading"><div><p className="eyebrow">COMPATIBILIDAD EN TIEMPO REAL</p><b>Formatos que se generarán al aceptar</b></div></div><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={'compatibility-item ' + (item.available ? '' : 'unavailable')} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? 'Se creará automáticamente' : item.reason}</small></div> })}</div></section>{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Guardar borrador conserva la estructura. Aceptar contenido aprueba la plantilla y crea automáticamente las actividades compatibles; no requiere una segunda aprobación por actividad.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><button type="submit" className="outline-button">Guardar borrador</button><button type="button" className="primary-button" onClick={() => handleSave('accepted')}>Aceptar contenido</button></div>{showPreview && <TemplatePreview template={currentTemplate} onClose={() => setShowPreview(false)} onPrint={() => window.print()} />}</form></div>
+  return <div className="modal-backdrop"><form className="modal-card template-modal" onSubmit={(event) => { event.preventDefault(); handleSave('draft') }}><div className="modal-head"><div><p className="eyebrow">{initialTemplate ? 'EDITAR PLANTILLA DE CONTENIDO' : 'CONSTRUCTOR DE PLANTILLA'}</p><h2>{initialTemplate ? 'Modificar contenido' : 'Estructura tu contenido'}</h2><p className="modal-subtitle">{initialTemplate ? 'Ajusta los objetivos, conceptos o situaciones de este contenido.' : 'La plantilla es la fuente; al aprobarla se generan las actividades compatibles.'}</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="template-progress"><div className="template-progress-head"><div><b>Progreso de la plantilla</b><small>{progress.completed} de {progress.total} criterios completos</small></div><strong>{progress.percent}%</strong></div><div className="progress-track"><span style={{ width: progress.percent + '%' }} /></div><div className="progress-checks">{progress.checks.map((check) => <span className={check.done ? 'done' : ''} key={check.label}>{check.done ? '✓' : '○'} {check.label}</span>)}</div></div><div className="autosave-status">{autosaveStatus || 'Los cambios se guardan localmente mientras editas.'}</div><div className="form-grid"><label>Título de la plantilla *<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Asignatura o área *<input required value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Ej. Ciencias naturales" /></label></div><label>Descripción breve<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="¿Qué aprenderá el grupo?" /></label><div className="form-grid"><label>Objetivo de aprendizaje *<textarea required value={objective} onChange={(event) => setObjective(event.target.value)} rows={3} /></label><label>Competencia o capacidad<textarea value={competency} onChange={(event) => setCompetency(event.target.value)} rows={3} /></label></div><label>Respaldo<div className="backup-actions"><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><small>Desde la vista previa puedes imprimir o guardar como PDF.</small></div></label><div className="template-block"><div className="block-heading"><div><p className="eyebrow">CONCEPTOS Y DEFINICIONES</p><b>Ideas que deben comprender</b></div><button type="button" className="text-button" onClick={() => setConcepts((current) => [...current, { id: 'c' + Date.now(), name: '', definition: '', example: '' }])}>＋ Agregar concepto</button></div>{concepts.map((concept) => <div className="repeatable-card" key={concept.id}><div className="repeatable-row"><input aria-label="Nombre del concepto" placeholder="Concepto" value={concept.name} onChange={(event) => updateConcept(concept.id, 'name', event.target.value)} /><button type="button" className="remove-button" onClick={() => setConcepts((current) => current.length > 1 ? current.filter((item) => item.id !== concept.id) : current)}>×</button></div><textarea aria-label="Definición" placeholder="Definición" value={concept.definition} onChange={(event) => updateConcept(concept.id, 'definition', event.target.value)} rows={2} /><input aria-label="Ejemplo" placeholder="Ejemplo o característica" value={concept.example} onChange={(event) => updateConcept(concept.id, 'example', event.target.value)} /></div>)}</div><div className="template-block"><div className="block-heading"><div><p className="eyebrow">SITUACIONES Y CONSECUENCIAS</p><b>Casos para decidir y reflexionar</b></div><button type="button" className="text-button" onClick={() => setSituations((current) => [...current, { id: 's' + Date.now(), title: '', context: '', decision: '', consequence: '' }])}>＋ Agregar situación</button></div>{situations.map((situation) => <div className="repeatable-card" key={situation.id}><div className="repeatable-row"><input aria-label="Título de situación" placeholder="Título del caso" value={situation.title} onChange={(event) => updateSituation(situation.id, 'title', event.target.value)} /><button type="button" className="remove-button" onClick={() => setSituations((current) => current.length > 1 ? current.filter((item) => item.id !== situation.id) : current)}>×</button></div><textarea aria-label="Contexto" placeholder="Contexto de la situación" value={situation.context} onChange={(event) => updateSituation(situation.id, 'context', event.target.value)} rows={2} /><div className="form-grid"><input aria-label="Decisión esperada" placeholder="Decisión o pregunta" value={situation.decision} onChange={(event) => updateSituation(situation.id, 'decision', event.target.value)} /><input aria-label="Consecuencia" placeholder="Consecuencia o feedback" value={situation.consequence} onChange={(event) => updateSituation(situation.id, 'consequence', event.target.value)} /></div></div>)}</div><div className="form-grid"><label>Pasos de un proceso<span className="field-hint">Un paso por línea; habilita ordenamiento desde dos pasos.</span><textarea value={processSteps} onChange={(event) => setProcessSteps(event.target.value)} rows={5} placeholder={'Observar\nAnalizar\nDecidir'} /></label><label>Categorías<span className="field-hint">Una categoría por línea; habilita clasificación.</span><textarea value={categories} onChange={(event) => setCategories(event.target.value)} rows={5} placeholder={'Causa\nConsecuencia'} /></label></div><section className="compatibility-preview"><div className="block-heading"><div><p className="eyebrow">COMPATIBILIDAD EN TIEMPO REAL</p><b>Formatos que se generarán al aceptar</b></div></div><div className="compatibility-grid">{Object.entries(types).map(([key, value]) => { const item = matches[key as ActivityType]; return <div className={'compatibility-item ' + (item.available ? '' : 'unavailable')} key={key}><span>{item.available ? '✓' : '×'}</span><b>{value.label}</b><small>{item.available ? 'Se creará automáticamente' : item.reason}</small></div> })}</div></section>{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Guardar borrador conserva la estructura. Aceptar contenido aprueba la plantilla y crea automáticamente las actividades compatibles; no requiere una segunda aprobación por actividad.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="outline-button" onClick={() => setShowPreview(true)}>Vista previa</button><button type="submit" className="outline-button">Guardar borrador</button><button type="button" className="primary-button" onClick={() => handleSave('accepted')}>Aceptar contenido</button></div>{showPreview && <TemplatePreview template={currentTemplate} onClose={() => setShowPreview(false)} onPrint={() => window.print()} />}</form></div>
 }
 function optionsForTemplate(template: EvaluationTemplate, type: ActivityType): string[] {
   const concepts = template.concepts.filter((item) => item.name.trim()).map((item) => item.name)
@@ -1982,6 +3098,108 @@ function createEditorState(template: EvaluationTemplate | undefined): ActivityEd
       explanation: '',
     },
   }
+}
+
+function activityToEditorState(activity: Activity, template?: EvaluationTemplate): ActivityEditorState {
+  const base = createEditorState(template)
+  const d = activity.details
+  if (activity.type === 'trueFalse') {
+    const tf = d?.trueFalse
+    const correctBool = tf?.correct !== undefined
+      ? tf.correct
+      : activity.answer === 'Verdadero'
+        ? true
+        : activity.answer === 'Falso'
+          ? false
+          : null
+    return {
+      ...base,
+      trueFalse: {
+        context: tf?.context || '',
+        statement: tf?.statement || activity.prompt || '',
+        correct: correctBool,
+        explanation: tf?.explanation || '',
+        hint: tf?.hint || activity.feedback || '',
+      },
+    }
+  }
+  if (activity.type === 'singleChoice') {
+    const sc = d?.singleChoice
+    const options: ChoiceOption[] = sc?.options && sc.options.length
+      ? sc.options.map((opt) => ({ id: opt.id || makeEditorId('choice-'), label: opt.label, correct: Boolean(opt.correct) }))
+      : activity.options.map((opt) => ({
+          id: makeEditorId('choice-'),
+          label: opt,
+          correct: opt === activity.answer,
+        }))
+    return {
+      ...base,
+      singleChoice: {
+        context: sc?.context || '',
+        options: options.length >= 2 ? options : [{ id: makeEditorId('choice-'), label: '', correct: false }, { id: makeEditorId('choice-'), label: '', correct: false }],
+        hint: sc?.hint || activity.feedback || '',
+        explanation: sc?.explanation || '',
+      },
+    }
+  }
+  if (activity.type === 'matching') {
+    const m = d?.matching
+    let pairs: MatchingPair[] = m?.pairs && m.pairs.length ? m.pairs : []
+    if (!pairs.length && activity.options.length) {
+      pairs = activity.options.map((opt) => {
+        const parts = opt.split('→').map((s) => s.trim())
+        return { id: makeEditorId('pair-'), left: parts[0] || opt, right: parts[1] || '' }
+      })
+    }
+    return {
+      ...base,
+      matching: {
+        context: m?.context || '',
+        pairs: pairs.length >= 2 ? pairs : [{ id: makeEditorId('pair-'), left: '', right: '' }, { id: makeEditorId('pair-'), left: '', right: '' }],
+        hint: m?.hint || activity.feedback || '',
+        explanation: m?.explanation || '',
+      },
+    }
+  }
+  if (activity.type === 'sorting') {
+    const s = d?.sorting
+    return {
+      ...base,
+      sorting: {
+        context: s?.context || '',
+        categories: s?.categories && s.categories.length ? s.categories : ['Categoría A', 'Categoría B'],
+        items: s?.items && s.items.length ? s.items : [{ id: makeEditorId('sort-'), label: '', category: '' }],
+        hint: s?.hint || activity.feedback || '',
+        explanation: s?.explanation || '',
+      },
+    }
+  }
+  if (activity.type === 'ordering') {
+    const o = d?.ordering
+    const steps = o?.steps && o.steps.length ? o.steps : (activity.options.length ? activity.options : ['Paso 1', 'Paso 2'])
+    return {
+      ...base,
+      ordering: {
+        context: o?.context || '',
+        steps,
+        hint: o?.hint || activity.feedback || '',
+        explanation: o?.explanation || '',
+      },
+    }
+  }
+  if (activity.type === 'scenario') {
+    const sc = d?.scenario
+    return {
+      ...base,
+      scenario: {
+        situation: sc?.situation || activity.prompt || '',
+        stages: sc?.stages && sc.stages.length ? sc.stages : base.scenario.stages,
+        hint: sc?.hint || activity.feedback || '',
+        explanation: sc?.explanation || '',
+      },
+    }
+  }
+  return base
 }
 
 function validateActivityEditor(type: ActivityType, title: string, prompt: string, value: ActivityEditorState): string {
@@ -2511,15 +3729,15 @@ function SpecificActivityEditor({ type, value, onChange }: { type: ActivityType;
   return <ScenarioEditor value={value.scenario} onChange={(scenario) => onChange({ ...value, scenario })} />
 }
 
-function ActivityForm({ initialType, template, onCancel, onSave }: { initialType: ActivityType; template?: EvaluationTemplate; onCancel: () => void; onSave: (activity: Activity) => void }) {
+function ActivityForm({ initialType, template, initialActivity, onCancel, onSave }: { initialType: ActivityType; template?: EvaluationTemplate; initialActivity?: Activity; onCancel: () => void; onSave: (activity: Activity) => void }) {
   const availableTypes = template ? Object.entries(types).filter(([key]) => compatibility(template)[key as ActivityType].available).map(([key]) => key as ActivityType) : Object.keys(types) as ActivityType[]
-  const [type, setType] = useState<ActivityType>(initialType)
-  const [title, setTitle] = useState(template ? template.title + ' · ' + types[initialType].label : 'Nueva actividad')
-  const [prompt, setPrompt] = useState(template?.objective ?? 'Escribe aquí la consigna de aprendizaje.')
-  const [topic, setTopic] = useState(template?.subject ?? 'Convivencia')
-  const difficulty: Activity['difficulty'] = template?.difficulty ?? 'Intermedio'
-  const [feedback, setFeedback] = useState('Relaciona tu respuesta con el objetivo de aprendizaje y revisa la evidencia del contenido.')
-  const [editorState, setEditorState] = useState<ActivityEditorState>(() => createEditorState(template))
+  const [type, setType] = useState<ActivityType>(initialActivity?.type ?? initialType)
+  const [title, setTitle] = useState(initialActivity?.title ?? (template ? template.title + ' · ' + types[initialType].label : 'Nueva actividad'))
+  const [prompt, setPrompt] = useState(initialActivity?.prompt ?? (template?.objective ?? 'Escribe aquí la consigna de aprendizaje.'))
+  const [topic, setTopic] = useState(initialActivity?.topic ?? (template?.subject ?? 'Convivencia'))
+  const difficulty: Activity['difficulty'] = initialActivity?.difficulty ?? (template?.difficulty ?? 'Intermedio')
+  const [feedback, setFeedback] = useState(initialActivity?.feedback ?? 'Relaciona tu respuesta con el objetivo de aprendizaje y revisa la evidencia del contenido.')
+  const [editorState, setEditorState] = useState<ActivityEditorState>(() => initialActivity ? activityToEditorState(initialActivity, template) : createEditorState(template))
   const [error, setError] = useState('')
   const changeType = (nextType: ActivityType) => {
     setType(nextType)
@@ -2531,71 +3749,1501 @@ function ActivityForm({ initialType, template, onCancel, onSave }: { initialType
     event.preventDefault()
     const validation = validateActivityEditor(type, title, prompt, editorState)
     if (validation) return setError(validation)
-    onSave(editorStateToActivity(type, editorState, { templateId: template?.id, title: title.trim(), topic: topic.trim(), difficulty, prompt: prompt.trim(), feedback: feedback.trim() }))
+    const baseCreated = editorStateToActivity(type, editorState, {
+      templateId: initialActivity?.templateId ?? template?.id,
+      title: title.trim(),
+      topic: topic.trim(),
+      difficulty,
+      prompt: prompt.trim(),
+      feedback: feedback.trim(),
+    })
+    onSave({
+      ...baseCreated,
+      id: initialActivity?.id || `a${Date.now()}-${type}`,
+      status: initialActivity?.status ?? 'published',
+      needsRepair: false,
+      repairReason: undefined,
+    })
   }
-  return <div className="modal-backdrop"><form className="modal-card activity-editor-modal" onSubmit={save}><div className="modal-head"><div><p className="eyebrow">{template ? 'ACTIVIDAD DESDE PLANTILLA' : 'ACTIVIDAD MANUAL'}</p><h2>Crear actividad</h2><p className="modal-subtitle">{template ? 'Contenido fuente: ' + template.title : 'Actividad adicional independiente.'}</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="form-grid"><label>Título de la actividad *<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Tema<input value={topic} onChange={(event) => setTopic(event.target.value)} /></label></div><label>Consigna general *<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={2} /></label><label>Feedback general<textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={2} /></label><label>Tipo de actividad<select value={type} onChange={(event) => changeType(event.target.value as ActivityType)}>{availableTypes.map((key) => <option key={key} value={key}>{types[key].label}</option>)}</select><span className="field-hint">{types[type].description}</span></label><SpecificActivityEditor type={type} value={editorState} onChange={setEditorState} />{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Esta actividad guarda un esquema específico para {types[type].label.toLowerCase()}. La aprobación docente ocurre en la plantilla seleccionada.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button className="primary-button">Crear actividad publicada</button></div></form></div>
-}
-function ProposalsView({ activities, hasDraft, onReview, onContinueDraft, onHome }: { activities: Activity[]; hasDraft: boolean; onReview: (id: string, status: 'published' | 'draft') => void; onContinueDraft: () => void; onHome: () => void }) { return <><PageIntro eyebrow="REVISIÓN Y CONTINUIDAD" title="Propuestas y borradores" description="Revisa actividades pendientes y retoma las plantillas que todavía no terminaste." />{hasDraft && <div className="admin-notice proposal-draft-notice"><span>✎</span><div><b>Tienes una plantilla en borrador.</b><p>La estructura se guardó automáticamente. Puedes continuarla desde el último punto antes de aprobarla.</p></div><button className="outline-button" onClick={onContinueDraft}>Continuar borrador</button></div>}<div className="review-banner"><span>◌</span><div><b>{activities.length ? `${activities.length} propuesta${activities.length === 1 ? '' : 's'} esperando revisión` : 'No hay propuestas pendientes'}</b><p>La publicación es una decisión del docente.</p></div></div><div className="proposal-list">{activities.length ? activities.map((activity) => <article className="proposal-card" key={activity.id}><div className={`list-type type-${activity.type}`}>{types[activity.type].icon}</div><div className="proposal-copy"><p className="eyebrow">PROPUESTA · {activity.topic.toUpperCase()}</p><h2>{activity.title}</h2><p>{activity.prompt}</p><small>Generada desde el formulario interno · sin archivos adjuntos</small></div><div className="proposal-actions"><button className="outline-button" onClick={() => onReview(activity.id, 'draft')}>Devolver</button><button className="primary-button" onClick={() => onReview(activity.id, 'published')}>✓ Aprobar</button></div></article>) : <div className="empty-state"><span>✓</span><h2>Buen trabajo, no hay propuestas pendientes.</h2><p>Las actividades nuevas aparecerán aquí antes de publicarse. Los borradores se retoman desde la tarjeta superior.</p></div>}</div></> }
+  const isEditing = Boolean(initialActivity)
+  const hasRepairReason = initialActivity?.needsRepair && initialActivity.repairReason
 
+  return <div className="modal-backdrop"><form className="modal-card activity-editor-modal" onSubmit={save}><div className="modal-head"><div><p className="eyebrow">{initialActivity?.needsRepair ? 'CORREGIR ACTIVIDAD' : isEditing ? 'EDITAR ACTIVIDAD' : template ? 'ACTIVIDAD DESDE PLANTILLA' : 'ACTIVIDAD MANUAL'}</p><h2>{isEditing ? 'Ajustar actividad' : 'Crear actividad'}</h2><p className="modal-subtitle">{template ? 'Contenido fuente: ' + template.title : isEditing ? 'Revisa los campos y guarda los cambios.' : 'Actividad adicional independiente.'}</p></div><button type="button" className="icon-button" onClick={onCancel} aria-label="Cerrar">×</button></div>{hasRepairReason && <div className="admin-notice repair-banner-notice"><span>⚠️</span><div><b>Observación detectada en la importación:</b><p>{initialActivity.repairReason}</p></div></div>}<div className="form-grid"><label>Título de la actividad *<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Tema<input value={topic} onChange={(event) => setTopic(event.target.value)} /></label></div><label>Consigna general *<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={2} /></label><label>Feedback general<textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} rows={2} /></label><label>Tipo de actividad<select value={type} onChange={(event) => changeType(event.target.value as ActivityType)} disabled={isEditing}>{availableTypes.map((key) => <option key={key} value={key}>{types[key].label}</option>)}</select><span className="field-hint">{types[type].description}</span></label><SpecificActivityEditor type={type} value={editorState} onChange={setEditorState} />{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Esta actividad guarda un esquema específico para {types[type].label.toLowerCase()}. La aprobación docente ocurre en la plantilla seleccionada.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button className="primary-button">{isEditing ? 'Guardar cambios y habilitar' : 'Crear actividad publicada'}</button></div></form></div>
+}
+
+function VariantDrilldownModal({
+  type,
+  variants,
+  selectedIds,
+  onToggleSelect,
+  onSelectAll,
+  onDeselectAll,
+  onReviewSingle,
+  onEditActivity,
+  onClose,
+}: {
+  type: ActivityType
+  variants: Activity[]
+  selectedIds: string[]
+  onToggleSelect: (id: string) => void
+  onSelectAll: () => void
+  onDeselectAll: () => void
+  onReviewSingle: (id: string, status: 'published' | 'draft') => void
+  onEditActivity: (activity: Activity) => void
+  onClose: () => void
+}) {
+  const typeMeta = types[type]
+  const validVariants = variants.filter((v) => !v.needsRepair)
+  const allSelected = validVariants.length > 0 && validVariants.every((v) => selectedIds.includes(v.id))
+  const selectedCount = variants.filter((v) => selectedIds.includes(v.id)).length
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card variant-drilldown-modal">
+        <div className="modal-head">
+          <div className="variant-modal-title">
+            <span className={`list-type type-${type}`}>{typeMeta.icon}</span>
+            <div>
+              <p className="eyebrow">VARIANTES DISPONIBLES</p>
+              <h2>{typeMeta.label}</h2>
+              <p className="modal-subtitle">{typeMeta.description}</p>
+            </div>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Cerrar modal">×</button>
+        </div>
+
+        <div className="variant-modal-toolbar">
+          <div className="variant-count-info">
+            <b>{selectedCount} de {variants.length} seleccionada{variants.length === 1 ? '' : 's'}</b>
+            <small>Marca las variantes que deseas incluir en tu evaluación</small>
+          </div>
+          <div className="variant-bulk-actions">
+            {allSelected ? (
+              <button type="button" className="outline-button" onClick={onDeselectAll}>
+                Deseleccionar todas
+              </button>
+            ) : (
+              <button type="button" className="outline-button" onClick={onSelectAll} disabled={validVariants.length === 0}>
+                Seleccionar todas ({validVariants.length})
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="variant-cards-list">
+          {variants.map((activity, index) => {
+            const isSelected = selectedIds.includes(activity.id)
+            const hasRepair = Boolean(activity.needsRepair)
+            return (
+              <article
+                key={activity.id}
+                className={`variant-item-card ${isSelected ? 'selected' : ''} ${hasRepair ? 'needs-repair' : ''}`}
+              >
+                <div className="variant-item-head">
+                  <label className="variant-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      disabled={hasRepair}
+                      onChange={() => onToggleSelect(activity.id)}
+                    />
+                    <span className="variant-number-badge">Variante {index + 1}</span>
+                    <strong className="variant-item-title">{activity.title}</strong>
+                  </label>
+                  {hasRepair && (
+                    <span className="repair-chip-warning">
+                      ⚠️ Requiere corrección
+                    </span>
+                  )}
+                </div>
+
+                <div className="variant-item-body">
+                  <p className="variant-prompt">{activity.prompt}</p>
+
+                  {activity.type === 'trueFalse' && (
+                    <div className="variant-preview-details">
+                      <span className="preview-label">Respuesta clave:</span>{' '}
+                      <b className="preview-val">{activity.answer}</b>
+                      {activity.feedback && (
+                        <p className="preview-hint">💡 <em>Pista orientadora:</em> {activity.feedback}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {activity.type === 'singleChoice' && activity.details?.singleChoice?.options && (
+                    <div className="variant-preview-details">
+                      <span className="preview-label">Opciones ({activity.details.singleChoice.options.length}):</span>
+                      <ul className="preview-options-list">
+                        {activity.details.singleChoice.options.map((opt) => (
+                          <li key={opt.id} className={opt.correct ? 'opt-correct' : ''}>
+                            {opt.correct && <span className="opt-check">✓</span>}
+                            <span>{opt.label}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {activity.feedback && (
+                        <p className="preview-hint">💡 <em>Pista orientadora:</em> {activity.feedback}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {activity.type === 'matching' && activity.details?.matching?.pairs && (
+                    <div className="variant-preview-details">
+                      <span className="preview-label">Pares ({activity.details.matching.pairs.length}):</span>
+                      <ul className="preview-pairs-list">
+                        {activity.details.matching.pairs.map((p) => (
+                          <li key={p.id}>
+                            <strong>{p.left}</strong> → <em>{p.right}</em>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {activity.type === 'sorting' && activity.details?.sorting && (
+                    <div className="variant-preview-details">
+                      <span className="preview-label">Categorías:</span> {activity.details.sorting.categories.join(', ')}
+                      <br />
+                      <span className="preview-label">Elementos a clasificar ({activity.details.sorting.items.length}):</span>{' '}
+                      {activity.details.sorting.items.map((it) => it.label).join(', ')}
+                    </div>
+                  )}
+
+                  {activity.type === 'ordering' && activity.details?.ordering && (
+                    <div className="variant-preview-details">
+                      <span className="preview-label">Secuencia de {activity.details.ordering.steps.length} pasos:</span>
+                      <ol className="preview-steps-list">
+                        {activity.details.ordering.steps.map((st, i) => (
+                          <li key={i}>{st}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
+                  {activity.type === 'scenario' && activity.details?.scenario && (
+                    <div className="variant-preview-details">
+                      <p className="preview-situation"><strong>Situación:</strong> {activity.details.scenario.situation}</p>
+                      <span className="preview-label">Etapas:</span> {activity.details.scenario.stages.length} etapa(s) de decisión
+                    </div>
+                  )}
+
+                  {hasRepair && (
+                    <div className="variant-repair-box">
+                      <p>
+                        <strong>Observación:</strong> {activity.repairReason || 'Se requiere revisión en su contenido o alternativas.'}
+                      </p>
+                      <button
+                        type="button"
+                        className="primary-button repair-action-btn"
+                        onClick={() => onEditActivity(activity)}
+                      >
+                        🛠 Corregir en el editor de actividades
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="variant-item-actions">
+                  {!hasRepair && (
+                    <button
+                      type="button"
+                      className="primary-button btn-small"
+                      onClick={() => onReviewSingle(activity.id, 'published')}
+                      title="Aprobar y publicar esta variante"
+                    >
+                      ✓ Aprobar variante
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="outline-button btn-small"
+                    onClick={() => onEditActivity(activity)}
+                  >
+                    ✎ {hasRepair ? 'Corregir' : 'Editar'}
+                  </button>
+                  <button
+                    type="button"
+                    className="outline-button btn-small danger-text-button"
+                    onClick={() => onReviewSingle(activity.id, 'draft')}
+                    title="Devolver a borradores"
+                  >
+                    Devolver
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="primary-button" onClick={onClose}>
+            ✓ Listo, volver al resumen de formatos
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProposalsView({
+  activities,
+  hasDraft,
+  onReview,
+  onReviewBatch,
+  onEditActivity,
+  onCreateRoomFromProposals,
+  onContinueDraft,
+  onHome,
+}: {
+  activities: Activity[]
+  hasDraft: boolean
+  onReview: (id: string, status: 'published' | 'draft') => void
+  onReviewBatch: (ids: string[], status: 'published' | 'draft') => void
+  onEditActivity: (activity: Activity) => void
+  onCreateRoomFromProposals: (activityIds: string[]) => void
+  onContinueDraft: () => void
+  onHome: () => void
+}) {
+  const [selectedTypeModal, setSelectedTypeModal] = useState<ActivityType | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => activities.filter((a) => !a.needsRepair).map((a) => a.id))
+
+  const typesWithActivities = (Object.keys(types) as ActivityType[]).filter(
+    (type) => activities.some((act) => act.type === type)
+  )
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    )
+  }
+
+  const selectAllOfType = (type: ActivityType) => {
+    const ofTypeIds = activities.filter((a) => a.type === type && !a.needsRepair).map((a) => a.id)
+    setSelectedIds((current) => Array.from(new Set([...current, ...ofTypeIds])))
+  }
+
+  const deselectAllOfType = (type: ActivityType) => {
+    const ofTypeIds = new Set(activities.filter((a) => a.type === type).map((a) => a.id))
+    setSelectedIds((current) => current.filter((id) => !ofTypeIds.has(id)))
+  }
+
+  const repairCount = activities.filter((a) => a.needsRepair).length
+  const selectedTypes = new Set(
+    selectedIds.map((id) => activities.find((a) => a.id === id)?.type).filter(Boolean)
+  )
+
+  return (
+    <>
+      <PageIntro
+        eyebrow="REVISIÓN Y BANCO DE PREGUNTAS"
+        title="Propuestas y variantes"
+        description="Explora las variantes generadas por tipo de actividad, selecciona las que usarás en tu evaluación y crea la sala."
+      />
+
+      {hasDraft && (
+        <div className="admin-notice proposal-draft-notice">
+          <span>✎</span>
+          <div>
+            <b>Tienes una plantilla en borrador.</b>
+            <p>La estructura se guardó automáticamente. Puedes continuarla desde el último punto antes de aprobarla.</p>
+          </div>
+          <button className="outline-button" onClick={onContinueDraft}>Continuar borrador</button>
+        </div>
+      )}
+
+      {repairCount > 0 && (
+        <div className="admin-notice repair-banner-notice">
+          <span>⚠️</span>
+          <div>
+            <b>Hay {repairCount} actividad{repairCount === 1 ? '' : 'es'} con observaciones para revisar</b>
+            <p>Puedes pulsar en su formato y usar “Corregir en el editor” para ajustar cualquier detalle sin tener que volver a la IA externa.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="review-banner">
+        <span>◌</span>
+        <div>
+          <b>
+            {activities.length
+              ? `${activities.length} propuesta${activities.length === 1 ? '' : 's'} en ${typesWithActivities.length} formato${typesWithActivities.length === 1 ? '' : 's'}`
+              : 'No hay propuestas pendientes'}
+          </b>
+          <p>Toca cada formato para ver sus variantes y seleccionar las preguntas para tu sala.</p>
+        </div>
+      </div>
+
+      {activities.length ? (
+        <div className="proposal-group-grid">
+          {typesWithActivities.map((typeKey) => {
+            const ofType = activities.filter((a) => a.type === typeKey)
+            const ofTypeSelected = ofType.filter((a) => selectedIds.includes(a.id))
+            const ofTypeRepairs = ofType.filter((a) => a.needsRepair)
+            const meta = types[typeKey]
+
+            return (
+              <article
+                key={typeKey}
+                className={`proposal-group-card ${ofTypeSelected.length > 0 ? 'has-selected' : ''}`}
+                onClick={() => setSelectedTypeModal(typeKey)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedTypeModal(typeKey) }}
+              >
+                <div className="proposal-group-header">
+                  <div className={`list-type type-${typeKey}`}>
+                    {meta.icon}
+                  </div>
+                  <div>
+                    <h3>{meta.label}</h3>
+                    <p className="group-variant-count">
+                      <b>{ofType.length}</b> variante{ofType.length === 1 ? '' : 's'} disponible{ofType.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="group-description">{meta.description}</p>
+
+                <div className="proposal-group-status">
+                  <span className={`proposal-selection-pill ${ofTypeSelected.length > 0 ? 'active' : ''}`}>
+                    {ofTypeSelected.length > 0
+                      ? `✓ ${ofTypeSelected.length} seleccionada${ofTypeSelected.length === 1 ? '' : 's'}`
+                      : 'Ninguna seleccionada'}
+                  </span>
+
+                  {ofTypeRepairs.length > 0 && (
+                    <span className="proposal-repair-badge">
+                      ⚠️ {ofTypeRepairs.length} por corregir
+                    </span>
+                  )}
+                </div>
+
+                <div className="proposal-group-footer">
+                  <button
+                    type="button"
+                    className="primary-button group-open-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedTypeModal(typeKey)
+                    }}
+                  >
+                    Ver variantes ({ofType.length}) →
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <span>✓</span>
+          <h2>Buen trabajo, no hay propuestas pendientes.</h2>
+          <p>Las actividades nuevas importadas o generadas aparecerán aquí agrupadas por tipo antes de publicarse.</p>
+        </div>
+      )}
+
+      {activities.length > 0 && (
+        <aside className="proposal-bottom-bar" aria-label="Resumen de selección de actividades">
+          <div className="proposal-bottom-info">
+            <span className="bottom-count-badge">{selectedIds.length}</span>
+            <div>
+              <strong>
+                Has seleccionado {selectedIds.length} pregunta{selectedIds.length === 1 ? '' : 's'} en {selectedTypes.size} formato{selectedTypes.size === 1 ? '' : 's'}
+              </strong>
+              <p className="type-limit-ok">
+                {selectedIds.length > 0
+                  ? 'Listo para configurar la sala con estas actividades.'
+                  : 'Selecciona al menos una actividad para crear la sala.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="proposal-bottom-actions">
+            <button
+              type="button"
+              className="outline-button"
+              onClick={() => onReviewBatch(activities.filter((a) => !a.needsRepair).map((a) => a.id), 'published')}
+              title="Aprobar todas las propuestas válidas"
+            >
+              ✓ Aprobar todas ({activities.filter((a) => !a.needsRepair).length})
+            </button>
+            <button
+              type="button"
+              className="primary-button create-room-btn"
+              disabled={selectedIds.length === 0}
+              onClick={() => onCreateRoomFromProposals(selectedIds)}
+            >
+              ⚙ Crear sala con seleccionadas ({selectedIds.length})
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {selectedTypeModal && (
+        <VariantDrilldownModal
+          type={selectedTypeModal}
+          variants={activities.filter((a) => a.type === selectedTypeModal)}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onSelectAll={() => selectAllOfType(selectedTypeModal)}
+          onDeselectAll={() => deselectAllOfType(selectedTypeModal)}
+          onReviewSingle={(id, status) => {
+            onReview(id, status)
+            const remaining = activities.filter((a) => a.type === selectedTypeModal && a.id !== id)
+            if (!remaining.length) setSelectedTypeModal(null)
+          }}
+          onEditActivity={(act) => {
+            setSelectedTypeModal(null)
+            onEditActivity(act)
+          }}
+          onClose={() => setSelectedTypeModal(null)}
+        />
+      )}
+    </>
+  )
+}
 
 function roomStatusLabel(status: RoomStatus): string {
   const labels: Record<RoomStatus, string> = { draft: 'Borrador', ready: 'Lista para iniciar', waiting: 'En espera', active: 'En curso', finished: 'Finalizada', archived: 'Archivada' }
   return labels[status]
 }
 
-function RoomsView({ rooms, activities, onCreate, onTransition, onDuplicate, onShare, onDelete, onHome }: { rooms: Room[]; activities: Activity[]; onCreate: (settings: RoomSettings) => void; onTransition: (id: string, status: RoomStatus) => void; onDuplicate: (room: Room) => void; onShare: (room: Room) => void; onDelete: (room: Room) => void; onHome: () => void }) {
-  const [showBuilder, setShowBuilder] = useState(false)
-  const publishedActivities = activities.filter((item) => item.status === 'published')
-  return <>
-    <PageIntro eyebrow="EXPERIENCIAS EN VIVO" title="Salas para tu grupo" description="Configura, abre y controla cada evaluación desde un solo lugar." action={<div className="room-create-actions"><button className="outline-button" onClick={() => setShowBuilder(true)}>⚙ Ajustes del examen</button><button className="primary-button" onClick={() => setShowBuilder(true)}>＋ Nueva sala</button></div>} />
-    <div className="room-rules"><span>01</span><p><b>Lista para iniciar</b><br /><small>Revisa los ajustes antes de abrirla.</small></p><span>02</span><p><b>En espera</b><br /><small>Comparte el código y espera al grupo.</small></p><span>03</span><p><b>En curso</b><br /><small>Al iniciar, la sala queda bloqueada.</small></p></div>
-    <div className="rooms-list">{rooms.map((room) => <article className={'room-card room-' + room.status} key={room.id}><div className="room-card-head"><div><span className={'room-status ' + room.status} /> {roomStatusLabel(room.status)}<h2>{room.name}</h2><p className="room-instructions">{room.instructions}</p></div><div className="room-code"><small>CÓDIGO DE ACCESO</small><b>{room.code}</b>{room.status !== 'archived' && room.status !== 'finished' && <button className="text-button" onClick={() => onShare(room)}>Copiar código</button>}</div></div><div className="room-card-meta"><span>⌘ {room.questionCount} preguntas</span><span>♧ Máx. {room.limit} estudiantes</span><span>◷ {room.time ? room.time + ' min' : 'Sin límite'}</span><span>◉ {room.scorePerQuestion} pts/pregunta</span></div><div className="room-activities">{room.activities.map((id, index) => { const activity = activities.find((item) => item.id === id); return <span key={id + '-' + index}><i>{index + 1}</i>{activity?.title ?? 'Actividad'}</span> })}</div><div className="room-card-actions">{room.status === 'ready' && <button className="primary-button" onClick={() => onTransition(room.id, 'waiting')}>Abrir sala</button>}{room.status === 'waiting' && <button className="primary-button" onClick={() => onTransition(room.id, 'active')}>▶ Iniciar evaluación</button>}{room.status === 'active' && <button className="primary-button" onClick={() => onTransition(room.id, 'finished')}>Finalizar evaluación</button>}{room.status === 'finished' && <><button className="outline-button" onClick={() => onDuplicate(room)}>Duplicar sala</button><button className="primary-button" onClick={() => onTransition(room.id, 'archived')}>Archivar sala</button></>}{room.status === 'archived' && <button className="outline-button" onClick={() => onDuplicate(room)}>Duplicar como nueva</button>}<button className="outline-button danger-button" onClick={() => onDelete(room)}>Eliminar sala</button></div></article>)}</div>
-    {showBuilder && <RoomBuilder activities={publishedActivities} onCancel={() => setShowBuilder(false)} onSave={(settings) => { onCreate(settings); setShowBuilder(false) }} />}
-  </>
+function RoomContentPicker({
+  templates,
+  activities,
+  onSelectTemplate,
+  onOpenDirectBuilder,
+  onNavigateToContent,
+  onNavigateToProposals,
+  onCancel,
+}: {
+  templates: EvaluationTemplate[]
+  activities: Activity[]
+  onSelectTemplate: (template: EvaluationTemplate, templateActivities: Activity[]) => void
+  onOpenDirectBuilder: () => void
+  onNavigateToContent: () => void
+  onNavigateToProposals: () => void
+  onCancel: () => void
+}) {
+  const publishedActivities = activities.filter((a) => a.status === 'published')
+  const pendingActivities = activities.filter((a) => a.status === 'pending')
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="room-picker-title">
+      <div className="modal-card room-content-picker">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">CREAR NUEVA SALA</p>
+            <h2 id="room-picker-title">Elige el contenido para tu evaluación</h2>
+            <p className="modal-subtitle">
+              Selecciona el tema que evaluarás con tu grupo. Las actividades aprobadas de ese tema formarán la evaluación.
+            </p>
+          </div>
+          <button type="button" className="icon-button" onClick={onCancel} aria-label="Cerrar selector">×</button>
+        </div>
+
+        {templates.length > 0 ? (
+          <div className="content-picker-list">
+            {templates.map((template) => {
+              const ofTemplate = activities.filter((a) => a.templateId === template.id)
+              const ofTemplatePublished = ofTemplate.filter((a) => a.status === 'published')
+              const ofTemplatePending = ofTemplate.filter((a) => a.status === 'pending')
+              const distinctTypes = Array.from(new Set(ofTemplatePublished.map((a) => a.type)))
+
+              return (
+                <article key={template.id} className="content-picker-card">
+                  <div className="picker-card-info">
+                    <div className="picker-card-badges">
+                      <span className="picker-subject-badge">{template.subject || 'Sin asignatura'}</span>
+                      {ofTemplatePublished.length > 0 ? (
+                        <span className="picker-ready-badge">
+                          ✓ {ofTemplatePublished.length} actividad{ofTemplatePublished.length === 1 ? '' : 'es'} lista{ofTemplatePublished.length === 1 ? '' : 's'}
+                        </span>
+                      ) : ofTemplatePending.length > 0 ? (
+                        <span className="picker-pending-badge">
+                          ◌ {ofTemplatePending.length} por revisar
+                        </span>
+                      ) : null}
+                    </div>
+                    <h3>{template.title || 'Plantilla sin título'}</h3>
+                    {template.description && <p className="picker-card-desc">{template.description}</p>}
+
+                    {distinctTypes.length > 0 && (
+                      <div className="picker-format-chips">
+                        {distinctTypes.map((t) => (
+                          <span key={t} className={`picker-format-chip type-${t}`}>
+                            <i>{types[t].icon}</i> {types[t].label} ({ofTemplatePublished.filter((a) => a.type === t).length})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="picker-card-footer">
+                    <span className="picker-card-meta">
+                      {ofTemplatePublished.length > 0
+                        ? `${ofTemplatePublished.length} actividades preparadas en ${distinctTypes.length} formato${distinctTypes.length === 1 ? '' : 's'}`
+                        : ofTemplatePending.length > 0
+                        ? `${ofTemplatePending.length} actividades pendientes de aprobación`
+                        : 'Sin actividades generadas'}
+                    </span>
+                    <div className="picker-card-action">
+                      {ofTemplatePublished.length > 0 ? (
+                        <button
+                          type="button"
+                          className="primary-button btn-small"
+                          onClick={() => onSelectTemplate(template, ofTemplatePublished)}
+                        >
+                          Evaluar este tema ({ofTemplatePublished.length}) →
+                        </button>
+                      ) : ofTemplatePending.length > 0 ? (
+                        <button
+                          type="button"
+                          className="outline-button btn-small"
+                          onClick={onNavigateToProposals}
+                          title="Revisar y aprobar propuestas de este tema"
+                        >
+                          Aprobar propuestas ({ofTemplatePending.length}) →
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="outline-button btn-small"
+                          onClick={onNavigateToContent}
+                        >
+                          Ver en contenido →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <span>◎</span>
+            <h2>Aún no tienes temas estructurados</h2>
+            <p>
+              Para crear una sala de evaluación, primero define un tema o importa un archivo JSON con actividades y apruébalas en Propuestas.
+            </p>
+            <div className="empty-state-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={onNavigateToContent}
+              >
+                ＋ Crear o importar plantilla
+              </button>
+              {pendingActivities.length > 0 && (
+                <button
+                  type="button"
+                  className="outline-button"
+                  onClick={onNavigateToProposals}
+                >
+                  Ver {pendingActivities.length} propuesta{pendingActivities.length === 1 ? '' : 's'} pendiente{pendingActivities.length === 1 ? '' : 's'} →
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="modal-actions picker-bottom-actions">
+          {publishedActivities.length > 0 && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={onOpenDirectBuilder}
+            >
+              ⚙ Abrir ajustes técnicos con todo el banco ({publishedActivities.length} actividades)
+            </button>
+          )}
+          <button type="button" className="outline-button" onClick={onCancel}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
-function RoomBuilder({ activities, onCancel, onSave }: { activities: Activity[]; onCancel: () => void; onSave: (settings: RoomSettings) => void }) {
-  const [name, setName] = useState('Nueva evaluación')
+function RoomsView({
+  rooms,
+  activities,
+  templates = [],
+  initialActivityIds,
+  onClearInitialActivities,
+  onCreate,
+  onTransition,
+  onDuplicate,
+  onShare,
+  onDelete,
+  onNavigateToContent,
+  onNavigateToProposals,
+  onHome,
+}: {
+  rooms: Room[]
+  activities: Activity[]
+  templates?: EvaluationTemplate[]
+  initialActivityIds?: string[] | null
+  onClearInitialActivities?: () => void
+  onCreate: (settings: RoomSettings) => void
+  onTransition: (id: string, status: RoomStatus) => void
+  onDuplicate: (room: Room) => void
+  onShare: (room: Room) => void
+  onDelete: (room: Room) => void
+  onNavigateToContent?: () => void
+  onNavigateToProposals?: () => void
+  onHome: () => void
+}) {
+  const [showContentPicker, setShowContentPicker] = useState(false)
+  const [showBuilder, setShowBuilder] = useState(() => Boolean(initialActivityIds && initialActivityIds.length > 0))
+  const [builderInitialIds, setBuilderInitialIds] = useState<string[] | undefined>(() => initialActivityIds ?? undefined)
+  const [builderInitialName, setBuilderInitialName] = useState<string | undefined>()
+  const publishedActivities = activities.filter((item) => item.status === 'published')
+
+  return (
+    <>
+      <PageIntro
+        eyebrow="EXPERIENCIAS EN VIVO"
+        title="Salas para tu grupo"
+        description="Configura, abre y controla cada evaluación desde un solo lugar."
+        action={
+          <div className="room-create-actions">
+            <button
+              className="outline-button"
+              onClick={() => {
+                setBuilderInitialIds(undefined)
+                setBuilderInitialName(undefined)
+                setShowBuilder(true)
+              }}
+              title="Configuración técnica directa"
+            >
+              ⚙ Ajustes del examen
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => setShowContentPicker(true)}
+            >
+              ＋ Nueva sala
+            </button>
+          </div>
+        }
+      />
+      <div className="room-rules">
+        <span>01</span>
+        <p>
+          <b>Lista para iniciar</b>
+          <br />
+          <small>Revisa los ajustes antes de abrirla.</small>
+        </p>
+        <span>02</span>
+        <p>
+          <b>En espera</b>
+          <br />
+          <small>Comparte el código y espera al grupo.</small>
+        </p>
+        <span>03</span>
+        <p>
+          <b>En curso</b>
+          <br />
+          <small>Al iniciar, la sala queda bloqueada.</small>
+        </p>
+      </div>
+
+      <div className="rooms-list">
+        {rooms.map((room) => (
+          <article className={'room-card room-' + room.status} key={room.id}>
+            <div className="room-card-head">
+              <div>
+                <span className={'room-status ' + room.status} /> {roomStatusLabel(room.status)}
+                <h2>{room.name}</h2>
+                <p className="room-instructions">{room.instructions}</p>
+              </div>
+              <div className="room-code">
+                <small>CÓDIGO DE ACCESO</small>
+                <b>{room.code}</b>
+                {room.status !== 'archived' && room.status !== 'finished' && (
+                  <button className="text-button" onClick={() => onShare(room)}>
+                    Copiar código
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="room-card-meta">
+              <span>⌘ {room.questionCount} preguntas</span>
+              <span>♧ Máx. {room.limit} estudiantes</span>
+              <span>◷ {room.time ? room.time + ' min' : 'Sin límite'}</span>
+              <span>◉ {room.scorePerQuestion} pts/pregunta</span>
+            </div>
+            <div className="room-activities">
+              {room.activities.map((id, index) => {
+                const activity = activities.find((item) => item.id === id)
+                return (
+                  <span key={id + '-' + index}>
+                    <i>{index + 1}</i>
+                    {activity?.title ?? 'Actividad'}
+                  </span>
+                )
+              })}
+            </div>
+            <div className="room-card-actions">
+              {room.status === 'ready' && (
+                <button className="primary-button" onClick={() => onTransition(room.id, 'waiting')}>
+                  Abrir sala
+                </button>
+              )}
+              {room.status === 'waiting' && (
+                <button className="primary-button" onClick={() => onTransition(room.id, 'active')}>
+                  ▶ Iniciar evaluación
+                </button>
+              )}
+              {room.status === 'active' && (
+                <button className="primary-button" onClick={() => onTransition(room.id, 'finished')}>
+                  Finalizar evaluación
+                </button>
+              )}
+              {room.status === 'finished' && (
+                <>
+                  <button className="outline-button" onClick={() => onDuplicate(room)}>
+                    Duplicar sala
+                  </button>
+                  <button className="primary-button" onClick={() => onTransition(room.id, 'archived')}>
+                    Archivar sala
+                  </button>
+                </>
+              )}
+              {room.status === 'archived' && (
+                <button className="outline-button" onClick={() => onDuplicate(room)}>
+                  Duplicar como nueva
+                </button>
+              )}
+              <button className="outline-button danger-button" onClick={() => onDelete(room)}>
+                Eliminar sala
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      {showContentPicker && (
+        <RoomContentPicker
+          templates={templates}
+          activities={activities}
+          onSelectTemplate={(template, templateActs) => {
+            setBuilderInitialIds(templateActs.map((a) => a.id))
+            setBuilderInitialName(`Evaluación · ${template.title || 'Tema'}`)
+            setShowContentPicker(false)
+            setShowBuilder(true)
+          }}
+          onOpenDirectBuilder={() => {
+            setBuilderInitialIds(undefined)
+            setBuilderInitialName(undefined)
+            setShowContentPicker(false)
+            setShowBuilder(true)
+          }}
+          onNavigateToContent={() => {
+            setShowContentPicker(false)
+            onNavigateToContent?.()
+          }}
+          onNavigateToProposals={() => {
+            setShowContentPicker(false)
+            onNavigateToProposals?.()
+          }}
+          onCancel={() => setShowContentPicker(false)}
+        />
+      )}
+
+      {showBuilder && (
+        <RoomBuilder
+          activities={publishedActivities}
+          initialActivityIds={builderInitialIds}
+          initialName={builderInitialName}
+          onCancel={() => {
+            setShowBuilder(false)
+            setBuilderInitialIds(undefined)
+            setBuilderInitialName(undefined)
+            onClearInitialActivities?.()
+          }}
+          onSave={(settings) => {
+            onCreate(settings)
+            setShowBuilder(false)
+            setBuilderInitialIds(undefined)
+            setBuilderInitialName(undefined)
+            onClearInitialActivities?.()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function RoomBuilder({
+  activities,
+  initialActivityIds,
+  initialName,
+  onCancel,
+  onSave,
+}: {
+  activities: Activity[]
+  initialActivityIds?: string[]
+  initialName?: string
+  onCancel: () => void
+  onSave: (settings: RoomSettings) => void
+}) {
+  const [name, setName] = useState(() => initialName || 'Nueva evaluación')
   const [instructions, setInstructions] = useState('Lee cada consigna y responde según el contenido trabajado.')
-  const [activityIds, setActivityIds] = useState<string[]>(activities.slice(0, 1).map((item) => item.id))
-  const [questionCount, setQuestionCount] = useState(5)
+  const [activityIds, setActivityIds] = useState<string[]>(() =>
+    initialActivityIds && initialActivityIds.length ? initialActivityIds : activities.slice(0, 1).map((item) => item.id)
+  )
+  const [questionCount, setQuestionCount] = useState(() =>
+    initialActivityIds && initialActivityIds.length ? initialActivityIds.length : 5
+  )
   const [limit, setLimit] = useState(30)
   const [time, setTime] = useState<number | null>(null)
   const [scorePerQuestion, setScorePerQuestion] = useState(10)
   const [shuffleQuestions, setShuffleQuestions] = useState(true)
   const [allowBack, setAllowBack] = useState(true)
   const [error, setError] = useState('')
-  const selectedTypes = new Set(activityIds.map((id) => activities.find((item) => item.id === id)?.type).filter(Boolean))
-  const toggleActivity = (id: string) => setActivityIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
-  const reuseFeatured = () => setActivityIds(activities.filter((item) => item.status === 'published').slice(0, 3).map((item) => item.id))
+
+  const toggleActivity = (id: string) =>
+    setActivityIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  const reuseFeatured = () =>
+    setActivityIds(activities.filter((item) => item.status === 'published').slice(0, 3).map((item) => item.id))
+
   const save = () => {
     if (!name.trim()) return setError('Escribe un nombre para la evaluación.')
     if (!activityIds.length) return setError('Selecciona al menos una actividad.')
-    if (selectedTypes.size > 3) return setError('Puedes combinar como máximo tres tipos diferentes.')
     setError('')
-    onSave({ name: name.trim(), instructions: instructions.trim(), activityIds, questionCount: Math.max(1, questionCount), limit: Math.max(1, limit), time, scorePerQuestion: Math.max(0, scorePerQuestion), shuffleQuestions, allowBack })
+    onSave({
+      name: name.trim(),
+      instructions: instructions.trim(),
+      activityIds,
+      questionCount: Math.max(1, questionCount),
+      limit: Math.max(1, limit),
+      time,
+      scorePerQuestion: Math.max(0, scorePerQuestion),
+      shuffleQuestions,
+      allowBack,
+    })
   }
-  return <div className="modal-backdrop"><div className="modal-card room-builder"><div className="modal-head"><div><p className="eyebrow">CONFIGURACIÓN DE EVALUACIÓN</p><h2>Prepara tu sala</h2><p className="modal-subtitle">Estos ajustes se definen antes de compartir el código.</p></div><button type="button" className="icon-button" onClick={onCancel}>×</button></div><div className="form-grid"><label>Nombre de la evaluación *<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Cantidad de estudiantes<input type="number" min="1" max="200" value={limit} onChange={(event) => setLimit(Number(event.target.value))} /></label></div><label>Instrucciones para estudiantes<textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={2} /></label><div className="form-grid"><label>Cantidad de preguntas<span className="field-hint">Las actividades seleccionadas se repiten si hace falta.</span><input type="number" min="1" max="50" value={questionCount} onChange={(event) => setQuestionCount(Number(event.target.value))} /></label><label>Puntaje por pregunta<input type="number" min="0" max="1000" value={scorePerQuestion} onChange={(event) => setScorePerQuestion(Number(event.target.value))} /></label></div><div className="form-grid"><label>Tiempo total<select value={time ?? ''} onChange={(event) => setTime(event.target.value ? Number(event.target.value) : null)}><option value="">Sin límite</option><option value="5">5 minutos</option><option value="10">10 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option></select></label><div className="settings-checks"><label className="check-row"><input type="checkbox" checked={shuffleQuestions} onChange={(event) => setShuffleQuestions(event.target.checked)} /> Mezclar preguntas</label><label className="check-row"><input type="checkbox" checked={allowBack} onChange={(event) => setAllowBack(event.target.checked)} /> Permitir volver atrás</label></div></div><section className="activity-selection"><div className="block-heading"><div><p className="eyebrow">BANCO DE PREGUNTAS</p><b>Elige las actividades que formarán la evaluación</b><small className="field-hint">Máximo tres tipos diferentes; puedes repetirlos hasta alcanzar la cantidad indicada.</small></div><div><button type="button" className="outline-button" onClick={reuseFeatured} disabled={!activities.length}>Reutilizar destacadas</button><span className="selection-count">{activityIds.length} seleccionadas</span></div></div>{activities.length ? <div className="activity-check-list">{activities.map((activity) => { const checked = activityIds.includes(activity.id); const typeCount = new Set([...selectedTypes, activity.type]).size; const disabled = !checked && typeCount > 3; return <label className={`activity-check ${checked ? 'selected' : ''} ${disabled ? 'disabled' : ''}`} key={activity.id}><input type="checkbox" checked={checked} disabled={disabled} onChange={() => toggleActivity(activity.id)} /><span className={`list-type type-${activity.type}`}>{types[activity.type].icon}</span><span><b>{activity.title}</b><small>{types[activity.type].label} · {activity.topic}</small></span></label> })}</div> : <div className="empty-state"><span>◈</span><h2>No hay actividades publicadas</h2><p>Crea o genera actividades desde una plantilla antes de preparar la sala.</p></div>}</section>{error && <div className="form-error">! {error}</div>}<div className="form-note">✓ Una sala iniciada ya no puede modificarse. El tiempo total, el límite, las preguntas y el puntaje quedan registrados para esta evaluación.</div><div className="modal-actions"><button type="button" className="outline-button" onClick={onCancel}>Cancelar</button><button type="button" className="primary-button" onClick={save}>Crear sala configurada</button></div></div></div>
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card room-builder">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">CONFIGURACIÓN DE EVALUACIÓN</p>
+            <h2>Prepara tu sala</h2>
+            <p className="modal-subtitle">Estos ajustes se definen antes de compartir el código.</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onCancel}>
+            ×
+          </button>
+        </div>
+        <div className="form-grid">
+          <label>
+            Nombre de la evaluación *
+            <input value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            Cantidad de estudiantes
+            <input
+              type="number"
+              min="1"
+              max="200"
+              value={limit}
+              onChange={(event) => setLimit(Number(event.target.value))}
+            />
+          </label>
+        </div>
+        <label>
+          Instrucciones para estudiantes
+          <textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={2} />
+        </label>
+        <div className="form-grid">
+          <label>
+            Cantidad de preguntas
+            <span className="field-hint">Las actividades seleccionadas se repiten si hace falta.</span>
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={questionCount}
+              onChange={(event) => setQuestionCount(Number(event.target.value))}
+            />
+          </label>
+          <label>
+            Puntaje por pregunta
+            <input
+              type="number"
+              min="0"
+              max="1000"
+              value={scorePerQuestion}
+              onChange={(event) => setScorePerQuestion(Number(event.target.value))}
+            />
+          </label>
+        </div>
+        <div className="form-grid">
+          <label>
+            Tiempo total
+            <select
+              value={time ?? ''}
+              onChange={(event) => setTime(event.target.value ? Number(event.target.value) : null)}
+            >
+              <option value="">Sin límite</option>
+              <option value="5">5 minutos</option>
+              <option value="10">10 minutos</option>
+              <option value="20">20 minutos</option>
+              <option value="30">30 minutos</option>
+              <option value="45">45 minutos</option>
+            </select>
+          </label>
+          <div className="settings-checks">
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={shuffleQuestions}
+                onChange={(event) => setShuffleQuestions(event.target.checked)}
+              />{' '}
+              Mezclar preguntas
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={allowBack}
+                onChange={(event) => setAllowBack(event.target.checked)}
+              />{' '}
+              Permitir volver atrás
+            </label>
+          </div>
+        </div>
+
+        <section className="activity-selection">
+          <div className="block-heading">
+            <div>
+              <p className="eyebrow">BANCO DE PREGUNTAS</p>
+              <b>Elige las actividades que formarán la evaluación</b>
+              <small className="field-hint">
+                Combina libremente los tipos y preguntas que desees según tu planificación pedagógica.
+              </small>
+            </div>
+            <div>
+              <button
+                type="button"
+                className="outline-button"
+                onClick={reuseFeatured}
+                disabled={!activities.length}
+              >
+                Reutilizar destacadas
+              </button>
+              <span className="selection-count">{activityIds.length} seleccionadas</span>
+            </div>
+          </div>
+          {activities.length ? (
+            <div className="activity-check-list">
+              {activities.map((activity) => {
+                const checked = activityIds.includes(activity.id)
+                return (
+                  <label className={`activity-check ${checked ? 'selected' : ''}`} key={activity.id}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleActivity(activity.id)}
+                    />
+                    <span className={`list-type type-${activity.type}`}>{types[activity.type].icon}</span>
+                    <span>
+                      <b>{activity.title}</b>
+                      <small>
+                        {types[activity.type].label} · {activity.topic}
+                      </small>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <span>◈</span>
+              <h2>No hay actividades publicadas</h2>
+              <p>Crea o genera actividades desde una plantilla antes de preparar la sala.</p>
+            </div>
+          )}
+        </section>
+
+        {error && <div className="form-error">! {error}</div>}
+        <div className="form-note">
+          ✓ Una sala iniciada ya no puede modificarse. El tiempo total, el límite, las preguntas y el puntaje quedan
+          registrados para esta evaluación.
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="outline-button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button type="button" className="primary-button" onClick={save}>
+            Crear sala configurada
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
-function ResultsView({ attempts, rooms, onExport, onHome }: { attempts: StudentAttempt[]; rooms: Room[]; onExport: () => void; onHome: () => void }) {
-  const [roomFilter, setRoomFilter] = useState('all')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const filtered = attempts.filter((attempt) => roomFilter === 'all' || attempt.roomId === roomFilter)
-  const selected = filtered.find((attempt) => attempt.id === selectedId) ?? filtered[0]
-  const answered = filtered.reduce((total, attempt) => total + attempt.answeredCount, 0)
-  const questionTotal = filtered.reduce((total, attempt) => total + attempt.totalQuestions, 0)
-  const score = filtered.reduce((total, attempt) => total + attempt.score, 0)
-  const maxScore = filtered.reduce((total, attempt) => total + attempt.maxScore, 0)
-  const participation = filtered.length ? Math.round((answered / Math.max(questionTotal, 1)) * 100) : 0
-  const accuracy = answered ? Math.round((filtered.reduce((total, attempt) => total + attempt.correctCount, 0) / answered) * 100) : 0
-  return <>
-    <PageIntro eyebrow="DATOS PARA ACOMPAÑAR" title="Resultados privados" description="Revisa evidencias, respuestas, omisiones y tiempos sin exponer resultados frente al grupo." action={<div className="results-actions"><select value={roomFilter} onChange={(event) => { setRoomFilter(event.target.value); setSelectedId(null) }} aria-label="Filtrar por sala"><option value="all">Todas las salas</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select><button className="primary-button" onClick={onExport}>↓ Exportar CSV / Excel</button></div>} />
-    <div className="results-summary"><div><strong>{participation}%</strong><span>respuestas registradas</span></div><div><strong>{accuracy}%</strong><span>aciertos de respondidas</span></div><div><strong>{filtered.length}</strong><span>intentos registrados</span></div><div><strong>{maxScore ? `${score}/${maxScore}` : '—'}</strong><span>puntaje acumulado</span></div></div>
-    <section className="panel results-panel"><div className="panel-heading"><div><h2>Intentos de estudiantes</h2><p>Selecciona un intento para ver el detalle por actividad.</p></div><span className="tag published">Privado</span></div>{filtered.length ? <div className="results-table-wrap"><table><thead><tr><th>Estudiante</th><th>Sala</th><th>Participación</th><th>Puntaje</th><th>Estado</th><th>Finalizó</th><th /></tr></thead><tbody>{filtered.map((attempt) => <tr key={attempt.id} className={selected?.id === attempt.id ? 'selected-result' : ''}><td><b>{attempt.studentName}</b><small>{attempt.roomCode}</small></td><td>{attempt.roomName}</td><td>{attempt.answeredCount}/{attempt.totalQuestions} respondidas<br /><small>{attempt.omittedCount} omitidas</small></td><td><b>{attempt.score}/{attempt.maxScore}</b><small>{attempt.correctCount} correctas</small></td><td><span className={`result-status ${attempt.status}`}>{attempt.status === 'timeout' ? 'Tiempo agotado' : 'Finalizada'}</span></td><td>{formatDate(attempt.finishedAt)}</td><td><button className="text-button" onClick={() => { setSelectedId(attempt.id); window.setTimeout(() => document.getElementById('result-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }}>Ver detalle</button></td></tr>)}</tbody></table></div> : <div className="results-empty"><span>↗</span><h3>Aún no hay intentos registrados</h3><p>Cuando un estudiante termine una sala, sus respuestas aparecerán aquí. El registro se guarda localmente en esta versión demo.</p></div>}</section>
-    {selected && <section id="result-detail" className="panel result-detail"><div className="panel-heading"><div><p className="eyebrow">DETALLE DEL INTENTO</p><h2>{selected.studentName} · {selected.roomName}</h2><p>{formatDate(selected.startedAt)} → {formatDate(selected.finishedAt)} · {selected.events.length} eventos registrados</p></div><div className="detail-score"><strong>{selected.score}/{selected.maxScore}</strong><small>{selected.correctCount} correctas · {selected.omittedCount} omitidas</small></div></div><div className="results-table-wrap"><table><thead><tr><th>#</th><th>Actividad</th><th>Estado</th><th>Respuesta</th><th>Resultado</th><th>Explicación / Pista</th><th>Tiempo</th></tr></thead><tbody>{selected.answers.map((answer) => <tr key={`${selected.id}-${answer.index}`}><td>{answer.index + 1}</td><td><b>{answer.activityTitle}</b><small>{types[answer.activityType].label}</small></td><td>{answer.status === 'answered' ? 'Respondida' : 'Omitida'}</td><td>{answer.response || 'Sin respuesta'}</td><td>{answer.correct === null ? 'No evaluada' : answer.correct ? `Correcta · ${answer.score} pts` : 'Orientación enviada'}</td><td>{answer.explanation ? <div><b>Explicación:</b> {answer.explanation}{answer.hint ? <><br /><small>Pista: {answer.hint}</small></> : null}</div> : answer.hint || '—'}</td><td>{answer.timeSeconds}s</td></tr>)}</tbody></table></div><div className="event-strip">{selected.events.slice(-5).map((event, index) => <span key={`${event.at}-${index}`}><b>{event.type === 'answer_submitted' ? 'Respuesta' : event.type === 'omitted' ? 'Omisión' : event.type === 'navigated_back' ? 'Regreso' : event.type === 'timeout' ? 'Tiempo agotado' : event.type === 'finished' ? 'Cierre' : 'Ingreso'}</b>{formatDate(event.at)}</span>)}</div></section>}
-    <div className="privacy-note">🔒 Privacidad activa · estos datos solo están disponibles para el docente y el administrador. El estudiante no ve su puntaje final.</div>
-  </>
+function ResultsView({
+  attempts,
+  rooms,
+  templates = [],
+  activities = [],
+  onExport,
+  onDeleteAttempt,
+  onClearAttempts,
+  onHome,
+}: {
+  attempts: StudentAttempt[]
+  rooms: Room[]
+  templates?: EvaluationTemplate[]
+  activities?: Activity[]
+  onExport: (roomId?: string) => void
+  onDeleteAttempt?: (attemptId: string) => void
+  onClearAttempts?: (roomId?: string) => void
+  onHome: () => void
+}) {
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null)
+  const [selectedRoomFilter, setSelectedRoomFilter] = useState<string>('all')
+  const [studentSearch, setStudentSearch] = useState('')
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
+
+  // Obtiene el título del tema/plantilla asociado a una sala
+  const getRoomTemplateTitle = (room: Room): string => {
+    const roomActs = activities.filter((a) => room.activities.includes(a.id) || room.activityIds.includes(a.id))
+    const templateId = roomActs.find((a) => Boolean(a.templateId))?.templateId
+    const t = templates.find((item) => item.id === templateId)
+    return t?.title || room.instructions || 'Tema general'
+  }
+
+  const roomMap = new Map<string, Room>()
+  rooms.forEach((r) => roomMap.set(r.id, r))
+
+  const roomsWithData = rooms.filter((r) => attempts.some((a) => a.roomId === r.id))
+  const orphanRoomIds = Array.from(new Set(attempts.map((a) => a.roomId))).filter((id) => !roomMap.has(id))
+  const allResultRooms = [
+    ...roomsWithData.map((room) => ({
+      id: room.id,
+      name: room.name,
+      code: room.code,
+      templateTitle: getRoomTemplateTitle(room),
+      status: room.status,
+      questionCount: room.questionCount,
+      attempts: attempts.filter((a) => a.roomId === room.id),
+    })),
+    ...orphanRoomIds.map((id) => {
+      const roomAtts = attempts.filter((a) => a.roomId === id)
+      return {
+        id,
+        name: roomAtts[0]?.roomName || 'Sala previa',
+        code: roomAtts[0]?.roomCode || '---',
+        templateTitle: 'Tema archivado',
+        status: 'closed' as RoomStatus,
+        questionCount: roomAtts[0]?.totalQuestions || 0,
+        attempts: roomAtts,
+      }
+    }),
+  ]
+
+  const handleClearRoom = (roomId: string, roomName: string) => {
+    if (window.confirm(`¿Deseas eliminar todos los resultados registrados de la sala "${roomName}"? Esta acción dejará limpia la app.`)) {
+      onClearAttempts?.(roomId)
+      if (activeRoomId === roomId) {
+        setActiveRoomId(null)
+        setSelectedAttemptId(null)
+      }
+    }
+  }
+
+  const handleDeleteSingleAttempt = (attemptId: string, studentName: string) => {
+    if (window.confirm(`¿Eliminar el intento de "${studentName}"?`)) {
+      onDeleteAttempt?.(attemptId)
+      if (selectedAttemptId === attemptId) setSelectedAttemptId(null)
+    }
+  }
+
+  const activeRoomData = allResultRooms.find((r) => r.id === activeRoomId)
+
+  // VISTA NIVEL 2: DETALLE DE LA SALA SELECCIONADA
+  if (activeRoomId && activeRoomData) {
+    const roomAttempts = activeRoomData.attempts
+    const filteredAttempts = roomAttempts.filter((a) =>
+      a.studentName.toLowerCase().includes(studentSearch.trim().toLowerCase())
+    )
+    const selectedAttempt = filteredAttempts.find((a) => a.id === selectedAttemptId) ?? (selectedAttemptId ? null : filteredAttempts[0])
+
+    const totalAnswered = roomAttempts.reduce((sum, a) => sum + a.answeredCount, 0)
+    const totalQuestions = roomAttempts.reduce((sum, a) => sum + a.totalQuestions, 0)
+    const totalScore = roomAttempts.reduce((sum, a) => sum + a.score, 0)
+    const totalMaxScore = roomAttempts.reduce((sum, a) => sum + a.maxScore, 0)
+    const participationPct = roomAttempts.length ? Math.round((totalAnswered / Math.max(totalQuestions, 1)) * 100) : 0
+    const accuracyPct = totalAnswered ? Math.round((roomAttempts.reduce((sum, a) => sum + a.correctCount, 0) / totalAnswered) * 100) : 0
+
+    return (
+      <>
+        <div className="room-results-backbar">
+          <button
+            type="button"
+            className="outline-button btn-small"
+            onClick={() => {
+              setActiveRoomId(null)
+              setSelectedAttemptId(null)
+              setStudentSearch('')
+            }}
+          >
+            ← Volver a salas
+          </button>
+          <div className="room-results-backbar-info">
+            <span className="eyebrow">TEMA: {activeRoomData.templateTitle.toUpperCase()}</span>
+            <h2>{activeRoomData.name} <small>({activeRoomData.code})</small></h2>
+          </div>
+          <div className="room-results-backbar-actions">
+            <button
+              type="button"
+              className="outline-button"
+              onClick={() => onExport(activeRoomData.id)}
+              title="Descargar las respuestas de esta sala en Excel o CSV"
+            >
+              ↓ Exportar esta sala
+            </button>
+            {onClearAttempts && (
+              <button
+                type="button"
+                className="outline-button danger-button"
+                onClick={() => handleClearRoom(activeRoomData.id, activeRoomData.name)}
+                title="Eliminar todos los intentos de esta sala"
+              >
+                🗑 Limpiar sala
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="results-summary">
+          <div><strong>{participationPct}%</strong><span>respuestas registradas</span></div>
+          <div><strong>{accuracyPct}%</strong><span>aciertos de respondidas</span></div>
+          <div><strong>{roomAttempts.length}</strong><span>estudiantes evaluados</span></div>
+          <div><strong>{totalMaxScore ? `${totalScore}/${totalMaxScore}` : '—'}</strong><span>puntaje acumulado</span></div>
+        </div>
+
+        <section className="panel results-panel">
+          <div className="panel-heading results-table-head">
+            <div>
+              <h2>Resultados por estudiante</h2>
+              <p>{roomAttempts.length} intento{roomAttempts.length === 1 ? '' : 's'} registrado{roomAttempts.length === 1 ? '' : 's'} en esta sala.</p>
+            </div>
+            <div className="student-search-box">
+              <input
+                type="search"
+                value={studentSearch}
+                onChange={(e) => setStudentSearch(e.target.value)}
+                placeholder="🔍 Buscar estudiante por nombre..."
+                aria-label="Buscar estudiante por nombre"
+              />
+            </div>
+          </div>
+
+          {filteredAttempts.length ? (
+            <div className="results-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Estudiante</th>
+                    <th>Participación</th>
+                    <th>Puntaje</th>
+                    <th>Estado</th>
+                    <th>Finalizó</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAttempts.map((attempt) => (
+                    <tr key={attempt.id} className={selectedAttempt?.id === attempt.id ? 'selected-result' : ''}>
+                      <td><b>{attempt.studentName}</b><small>código: {attempt.roomCode}</small></td>
+                      <td>{attempt.answeredCount}/{attempt.totalQuestions} respondidas<br /><small>{attempt.omittedCount} omitidas</small></td>
+                      <td><b>{attempt.score}/{attempt.maxScore}</b><small>{attempt.correctCount} correctas</small></td>
+                      <td><span className={`result-status ${attempt.status}`}>{attempt.status === 'timeout' ? 'Tiempo agotado' : 'Finalizada'}</span></td>
+                      <td>{formatDate(attempt.finishedAt)}</td>
+                      <td>
+                        <div className="table-actions">
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => {
+                              setSelectedAttemptId(attempt.id)
+                              window.setTimeout(() => document.getElementById('result-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+                            }}
+                          >
+                            Ver detalle
+                          </button>
+                          {onDeleteAttempt && (
+                            <button
+                              type="button"
+                              className="text-button danger-text-button"
+                              onClick={() => handleDeleteSingleAttempt(attempt.id, attempt.studentName)}
+                              title="Eliminar este intento individual"
+                            >
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="results-empty">
+              <span>🔍</span>
+              <h3>No se encontraron estudiantes</h3>
+              <p>Ningún participante coincide con el término de búsqueda "{studentSearch}".</p>
+            </div>
+          )}
+        </section>
+
+        {selectedAttempt && (
+          <section id="result-detail" className="panel result-detail">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">RESPUESTAS INDIVIDUALES</p>
+                <h2>{selectedAttempt.studentName}</h2>
+                <p>{formatDate(selectedAttempt.startedAt)} → {formatDate(selectedAttempt.finishedAt)} · {selectedAttempt.events.length} eventos registrados</p>
+              </div>
+              <div className="detail-score-wrap">
+                <div className="detail-score">
+                  <strong>{selectedAttempt.score}/{selectedAttempt.maxScore} pts</strong>
+                  <small>{selectedAttempt.correctCount} correctas · {selectedAttempt.omittedCount} omitidas</small>
+                </div>
+                {onDeleteAttempt && (
+                  <button
+                    type="button"
+                    className="outline-button danger-button btn-small"
+                    onClick={() => handleDeleteSingleAttempt(selectedAttempt.id, selectedAttempt.studentName)}
+                    title="Eliminar este intento"
+                  >
+                    🗑 Eliminar intento
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="results-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Actividad</th>
+                    <th>Estado</th>
+                    <th>Respuesta del estudiante</th>
+                    <th>Resultado</th>
+                    <th>Pista / Explicación</th>
+                    <th>Tiempo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedAttempt.answers.map((answer) => (
+                    <tr key={`${selectedAttempt.id}-${answer.index}`}>
+                      <td>{answer.index + 1}</td>
+                      <td><b>{answer.activityTitle}</b><small>{types[answer.activityType].label}</small></td>
+                      <td>{answer.status === 'answered' ? 'Respondida' : 'Omitida'}</td>
+                      <td>{answer.response || 'Sin respuesta'}</td>
+                      <td>{answer.correct === null ? 'No evaluada' : answer.correct ? `✓ Correcta · ${answer.score} pts` : '◌ Orientación enviada'}</td>
+                      <td>{answer.explanation ? <div><b>Explicación:</b> {answer.explanation}{answer.hint ? <><br /><small>Pista: {answer.hint}</small></> : null}</div> : answer.hint || '—'}</td>
+                      <td>{answer.timeSeconds}s</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="event-strip">
+              {selectedAttempt.events.slice(-5).map((event, index) => (
+                <span key={`${event.at}-${index}`}>
+                  <b>{event.type === 'answer_submitted' ? 'Respuesta' : event.type === 'omitted' ? 'Omisión' : event.type === 'navigated_back' ? 'Regreso' : event.type === 'timeout' ? 'Tiempo agotado' : event.type === 'finished' ? 'Cierre' : 'Ingreso'}</b>
+                  {formatDate(event.at)}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+      </>
+    )
+  }
+
+  // VISTA NIVEL 1: LISTADO DE SALAS CON RESULTADOS
+  const displayedRooms = selectedRoomFilter === 'all'
+    ? allResultRooms
+    : allResultRooms.filter((r) => r.id === selectedRoomFilter)
+
+  return (
+    <>
+      <PageIntro
+        eyebrow="DATOS PARA ACOMPAÑAR"
+        title="Resultados privados"
+        description="Revisa evidencias, respuestas, omisiones y tiempos por sala sin exponer resultados frente al grupo."
+        action={
+          <div className="results-actions">
+            <select
+              value={selectedRoomFilter}
+              onChange={(e) => setSelectedRoomFilter(e.target.value)}
+              disabled={allResultRooms.length === 0}
+              aria-label="Seleccionar o filtrar sala para exportar"
+            >
+              <option value="all">
+                {allResultRooms.length ? `Todas las salas (${allResultRooms.length})` : 'Sin salas con datos'}
+              </option>
+              {allResultRooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ({r.code}) · {r.templateTitle}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => {
+                if (selectedRoomFilter === 'all') {
+                  onExport()
+                } else {
+                  onExport(selectedRoomFilter)
+                }
+              }}
+              disabled={attempts.length === 0}
+              title={selectedRoomFilter === 'all' ? 'Exportar todos los resultados a CSV' : 'Exportar los resultados de la sala seleccionada a CSV'}
+            >
+              {selectedRoomFilter === 'all' ? '↓ Exportar selección' : '↓ Exportar sala a CSV'}
+            </button>
+            {selectedRoomFilter !== 'all' && (
+              <button
+                type="button"
+                className="outline-button btn-small"
+                onClick={() => setSelectedRoomFilter('all')}
+                title="Mostrar todas las salas nuevamente"
+              >
+                ✕ Ver todas
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      <section className="results-rooms-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">EVALUACIONES REALIZADAS</p>
+            <h2>Resultados por sala</h2>
+          </div>
+          <span className="muted">
+            {selectedRoomFilter === 'all'
+              ? `${allResultRooms.length} sala${allResultRooms.length === 1 ? '' : 's'} con datos`
+              : `Mostrando 1 sala de ${allResultRooms.length}`}
+          </span>
+        </div>
+
+        {displayedRooms.length ? (
+          <div className="room-results-grid">
+            {displayedRooms.map((roomItem) => {
+              const rAttempts = roomItem.attempts
+              const ansCount = rAttempts.reduce((sum, a) => sum + a.answeredCount, 0)
+              const qCount = rAttempts.reduce((sum, a) => sum + a.totalQuestions, 0)
+              const partPct = rAttempts.length ? Math.round((ansCount / Math.max(qCount, 1)) * 100) : 0
+              const corrCount = rAttempts.reduce((sum, a) => sum + a.correctCount, 0)
+              const accPct = ansCount ? Math.round((corrCount / ansCount) * 100) : 0
+              const totScore = rAttempts.reduce((sum, a) => sum + a.score, 0)
+              const maxTotScore = rAttempts.reduce((sum, a) => sum + a.maxScore, 0)
+
+              return (
+                <article key={roomItem.id} className="room-result-card">
+                  <div className="room-result-card-head">
+                    <div className="room-result-title-wrap">
+                      <div className="room-result-badges">
+                        <span className="room-result-template-badge">
+                          TEMA: {roomItem.templateTitle}
+                        </span>
+                        <span className={`result-status ${roomItem.status === 'active' ? 'active' : 'closed'}`}>
+                          {roomStatusLabel(roomItem.status)}
+                        </span>
+                      </div>
+                      <h3>{roomItem.name}</h3>
+                      <div className="room-result-meta-line">
+                        <span>Código: <b>{roomItem.code}</b></span>
+                        <span>· {roomItem.questionCount} preguntas</span>
+                        <span>· {rAttempts.length} participante{rAttempts.length === 1 ? '' : 's'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="room-result-metrics">
+                    <div className="room-metric-col">
+                      <strong>{partPct}%</strong>
+                      <small>Participación</small>
+                    </div>
+                    <div className="room-metric-col">
+                      <strong>{accPct}%</strong>
+                      <small>Precisión</small>
+                    </div>
+                    <div className="room-metric-col">
+                      <strong>{rAttempts.length}</strong>
+                      <small>Estudiantes</small>
+                    </div>
+                    <div className="room-metric-col">
+                      <strong>{maxTotScore ? `${totScore}/${maxTotScore}` : '—'}</strong>
+                      <small>Puntaje total</small>
+                    </div>
+                  </div>
+
+                  <div className="room-result-footer">
+                    <button
+                      type="button"
+                      className="primary-button btn-small"
+                      onClick={() => {
+                        setActiveRoomId(roomItem.id)
+                        setSelectedAttemptId(null)
+                        setStudentSearch('')
+                      }}
+                    >
+                      Ver resultados por estudiante ({rAttempts.length}) →
+                    </button>
+                    <div className="room-result-actions-secondary">
+                      <button
+                        type="button"
+                        className="outline-button btn-small"
+                        onClick={() => onExport(roomItem.id)}
+                        title="Exportar los resultados de esta sala a CSV / Excel"
+                      >
+                        ↓ Exportar CSV
+                      </button>
+                      {onClearAttempts && (
+                        <button
+                          type="button"
+                          className="outline-button btn-small danger-text-button"
+                          onClick={() => handleClearRoom(roomItem.id, roomItem.name)}
+                          title="Eliminar todos los intentos registrados de esta sala"
+                        >
+                          🗑 Eliminar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="results-empty">
+            <span>↗</span>
+            <h3>Aún no hay intentos registrados</h3>
+            <p>Cuando un estudiante complete una evaluación en una sala, aquí aparecerán los resultados organizados por sala y por tema pedagógico.</p>
+          </div>
+        )}
+      </section>
+      <div className="privacy-note">🔒 Privacidad activa · estos datos solo están disponibles para el docente y el administrador. El estudiante no ve su puntaje final.</div>
+    </>
+  )
 }
 
 
@@ -2610,7 +5258,7 @@ function shuffleItems<T>(items: T[]): T[] { const result = [...items]; for (let 
 
 function StudentView({ room, roomCode, setRoomCode, studentName, setStudentName, onStart, onRefresh, onLeave }: { room: Room | null; roomCode: string; setRoomCode: (value: string) => void; studentName: string; setStudentName: (value: string) => void; onStart: () => void; onRefresh: () => void; onLeave: () => void }) {
   if (room?.status === 'waiting') return <div className="student-entry"><div className="student-orb">◷</div><p className="eyebrow">SALA ABIERTA</p><h1>Estás dentro.</h1><p>La sala <b>{room.name}</b> está esperando que el docente inicie la evaluación.</p><div className="entry-card waiting-card"><div className="waiting-code"><small>CÓDIGO</small><strong>{room.code}</strong></div><div className="waiting-state"><span className="waiting-pulse" /><div><b>Esperando al docente</b><small>Cuando comience, podrás responder las {room.questionCount} preguntas.</small></div></div><button className="primary-button wide" onClick={onRefresh}>Actualizar estado</button><button className="text-button wide" onClick={onLeave}>Cambiar de sala</button></div><div className="student-footer">EvaluEdu · tu participación es privada</div></div>
-  return <div className="student-entry"><div className="student-orb">✦</div><p className="eyebrow">ENTRADA DE ESTUDIANTES</p><h1>Aprende haciendo.</h1><p>Entra a una sala con el código de tu docente.</p><div className="entry-card"><label>Tu nombre<input value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="¿Cómo te llamamos?" /></label><label>Código de sala<input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="Ej. EDU-274" /></label><button className="primary-button wide" onClick={onStart}>Entrar a la sala →</button><small>La evaluación comenzará cuando tu docente dé inicio a la sala.</small></div><div className="student-footer">EvaluEdu · evaluación activa <span>•</span> Modo estudiante</div></div>
+  return <div className="student-entry"><div className="student-orb">✦</div><p className="eyebrow">ENTRADA DE ESTUDIANTES</p><h1>Aprende haciendo.</h1><p>Entra a una sala con el código de tu docente.</p><div className="entry-card"><label>Nombre completo<input value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Escribe tu nombre completo" /></label><label>Código de sala<input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="Ej. EDU-274" /></label><button className="primary-button wide" onClick={onStart}>Entrar a la sala →</button><small>La evaluación comenzará cuando tu docente dé inicio a la sala.</small></div><div className="student-footer">EvaluEdu · evaluación activa <span>•</span> Modo estudiante</div></div>
 }
 
 function StudentCompletion({ room, onLeave }: { room: Room | null; onLeave: () => void }) { return <div className="student-entry"><div className="student-orb completion-orb">✓</div><p className="eyebrow">PARTICIPACIÓN REGISTRADA</p><h1>Terminaste.</h1><p>Tu participación en <b>{room?.name ?? 'la evaluación'}</b> fue enviada al docente.</p><div className="entry-card completion-card"><div className="completion-line"><span>✓</span><div><b>Respuesta recibida</b><small>El docente podrá revisar tus evidencias y retroalimentación.</small></div></div><div className="privacy-note">🔒 El resultado final no se muestra en la vista del estudiante.</div><button className="outline-button wide" onClick={onLeave}>Salir de la sala</button></div><div className="student-footer">EvaluEdu · gracias por participar</div></div> }
