@@ -903,11 +903,17 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
   - **Fase 7 (Versión v1.3+ y Comercialización):** Expansión progresiva a los 15 formatos adicionales del catálogo de 21 actividades ([`docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md`](docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md)) y paquete legal/operativo pre-comercial (Privacidad, SLA y Backups).
 
 
-### Configuración de tamaño de impresión Carta (`letter portrait`) — 2026-10-28
+### Configuración de tamaño de impresión Carta (`letter portrait`) y Pruebas en Móvil Infinix (X6850) — 2026-10-28
 
-- **Estado:** Implementado en `src/App.tsx` y `src/index.css`.
-- **Alcance:**
+- **Estado:** Implementado en `src/App.tsx` y `src/index.css`; auditado directamente en el dispositivo físico **Infinix X6850** (1080x2436 px, 384 dpi / viewport 450x878 CSS px) conectado por ADB.
+- **Configuración Carta (`letter portrait`):**
   - Se configuró la directiva `@page { margin: 1.2cm; size: letter portrait; }` en el generador de documentos aislados (`generateExamHtmlDocument` en `src/App.tsx`) y en la regla de impresión global `@media print` en `src/index.css`.
   - Aplica a todas las descargas/impresiones de documentos pedagógicos (Examen en blanco del aula, Comprobante Oficial del estudiante y plantilla impresa). Las exportaciones a Excel/CSV se mantienen en su formato tabular estándar de datos sin verse afectadas por esta regla.
+- **Auditoría móvil en vivo y correcciones ergonómicas:**
+  1. *Alineación de botones en modal de comprobante:* En pantallas móviles estrechas los 3 botones de acción del modal (`Cerrar`, `Descargar archivo .html`, `Imprimir o Guardar PDF`) se desbordaban horizontalmente recortando texto; se implementó apilamiento vertical al 100% de ancho (`flex-direction: column`, `padding: 12px`, botones táctiles de 48px de altura).
+  2. *Metadatos del estudiante en comprobante:* La fila `Entrega` y `Estado` causaba desborde horizontal en el `iframe`; se añadió `@media (max-width: 600px)` con `flex-wrap: wrap` en `.field-row` para evitar solapamientos.
+  3. *Contraste en modo noche:* Se añadió soporte de tema oscuro para `.completion-line` (`background: #14241d`, `border: #234c3b`, texto verde menta `#e2f8ec`) eliminando el recuadro blanco que deslumbraba en modo noche.
+  4. *Las 6 actividades evaluadas en Infinix:* Falso/Verdadero, Selección Única, Asociación (apilada en 2 bloques), Clasificación (arrastrar o tocar + desplegables accesibles), Ordenamiento (botones ↑/↓ táctiles) y Escenario de decisiones (etapa contextual) funcionaron sin desbordes horizontales ni fallas de scroll.
+
 
 
