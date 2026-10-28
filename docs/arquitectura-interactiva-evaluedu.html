@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapa Arquitectónico Interactivo · EvaluEdu (EduEval v1.2)</title>
+  <style>
+    :root {
+      --bg-deep: #040b16;
+      --bg-panel: #081529;
+      --bg-card: #0c1f3d;
+      --bg-node: rgba(14, 38, 76, 0.86);
+      --border-blue: rgba(96, 165, 250, 0.42);
+      --border-bright: #93c5fd;
+      --glow-blue: rgba(59, 130, 246, 0.45);
+      --accent-cyan: #38bdf8;
+      --accent-amber: #fbbf24;
+      --accent-emerald: #34d399;
+      --accent-purple: #c084fc;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-deep);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Cabecera Superior */
+    .top-header {
+      background: linear-gradient(180deg, rgba(8, 21, 41, 0.98) 0%, rgba(5, 13, 28, 0.95) 100%);
+      border-bottom: 1px solid var(--border-blue);
+      padding: 12px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    }
+
+    .brand-block {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(59, 130, 246, 0.3));
+      border: 1.5px solid var(--accent-amber);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+    }
+
+    .brand-title {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .version-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(52, 211, 153, 0.16);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Pestañas de Circuitos */
+    .circuit-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 20px;
+      background: rgba(6, 16, 33, 0.95);
+      border-bottom: 1px solid rgba(96, 165, 250, 0.22);
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .tabs-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tab-btn {
+      background: rgba(14, 34, 68, 0.7);
+      color: #cbd5e1;
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      padding: 8px 13px;
+      border-radius: 10px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab-btn:hover {
+      border-color: var(--accent-cyan);
+      color: #ffffff;
+      background: rgba(25, 58, 112, 0.85);
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.45), rgba(14, 116, 144, 0.45));
+      color: #ffffff;
+      border-color: var(--accent-amber);
+      box-shadow: 0 0 14px rgba(251, 191, 36, 0.3);
+    }
+
+    .tour-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .action-btn {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(217, 119, 6, 0.32));
+      color: #fde68a;
+      border: 1px solid rgba(251, 191, 36, 0.55);
+      padding: 7px 13px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .action-btn:hover {
+      background: rgba(245, 158, 11, 0.4);
+      transform: translateY(-1px);
+      box-shadow: 0 0 12px rgba(251, 191, 36, 0.4);
+    }
+
+    .search-input {
+      background: rgba(8, 21, 41, 0.9);
+      border: 1px solid var(--border-blue);
+      color: #ffffff;
+      padding: 7px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      width: 210px;
+      outline: none;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent-amber);
+      box-shadow: 0 0 10px rgba(251, 191, 36, 0.25);
+    }
+
+    /* Contenedor Principal: Lienzo + Inspector */
+    .workspace {
+      display: grid;
+      grid-template-columns: 1fr 430px;
+      flex: 1;
+      min-height: calc(100vh - 125px);
+    }
+
+    @media (max-width: 1120px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Lienzo Blueprint Oscuro con Cuadrícula Técnica */
+    .blueprint-stage {
+      position: relative;
+      background-color: #040c1a;
+      background-image:
+        linear-gradient(to right, rgba(37, 99, 235, 0.13) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(37, 99, 235, 0.13) 1px, transparent 1px),
+        linear-gradient(to right, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+        radial-gradient(circle at 50% 45%, rgba(29, 108, 224, 0.22) 0%, rgba(4, 12, 26, 0.96) 78%);
+      background-size: 112px 112px, 112px 112px, 28px 28px, 28px 28px, 100% 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 18px;
+      overflow: auto;
+    }
+
+    .circuit-banner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(8, 22, 46, 0.85);
+      border: 1px solid rgba(96, 165, 250, 0.35);
+      border-radius: 12px;
+      padding: 10px 16px;
+      backdrop-filter: blur(8px);
+      z-index: 10;
+    }
+
+    .circuit-banner h2 {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--accent-cyan);
+    }
+
+    .circuit-banner p {
+      font-size: 12.5px;
+      color: #cbd5e1;
+    }
+
+    /* Contenedor del Diagrama Escalonable */
+    .canvas-wrapper {
+      position: relative;
+      width: 920px;
+      height: 520px;
+      margin: 12px auto;
+      flex-shrink: 0;
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+    }
+
+    .wires-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .wire-base {
+      fill: none;
+      stroke: rgba(147, 197, 253, 0.34);
+      stroke-width: 2.5;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+      transition: all 0.25s ease;
+    }
+
+    .wire-pulse {
+      fill: none;
+      stroke: #93c5fd;
+      stroke-width: 3;
+      stroke-dasharray: 12 160;
+      animation: pulseTravel 3.4s linear infinite;
+      filter: drop-shadow(0 0 6px #60a5fa);
+    }
+
+    .wire-highlight {
+      stroke: var(--accent-amber) !important;
+      stroke-width: 3.6 !important;
+      filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.85));
+    }
+
+    .joint-dot {
+      fill: #93c5fd;
+      filter: drop-shadow(0 0 5px #60a5fa);
+    }
+
+    @keyframes pulseTravel {
+      from { stroke-dashoffset: 172; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    /* Nodos Estilo Imagen de Referencia */
+    .bp-node {
+      position: absolute;
+      background: linear-gradient(145deg, rgba(16, 44, 92, 0.88), rgba(8, 22, 48, 0.94));
+      border: 1.5px solid rgba(96, 165, 250, 0.5);
+      border-radius: 16px;
+      box-shadow: 0 0 22px rgba(59, 130, 246, 0.25), inset 0 0 14px rgba(96, 165, 250, 0.16);
+      backdrop-filter: blur(8px);
+      color: #ffffff;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8px 10px;
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+      z-index: 5;
+    }
+
+    .bp-node:hover {
+      border-color: #bae6fd;
+      box-shadow: 0 0 28px rgba(56, 189, 248, 0.6), inset 0 0 18px rgba(147, 197, 253, 0.3);
+      transform: translateY(-3px) scale(1.03);
+    }
+
+    .bp-node.selected {
+      border: 2px solid var(--accent-amber);
+      box-shadow: 0 0 32px rgba(251, 191, 36, 0.65), inset 0 0 20px rgba(251, 191, 36, 0.25);
+      transform: translateY(-2px) scale(1.04);
+    }
+
+    .bp-node.core-hub {
+      background: linear-gradient(135deg, rgba(23, 62, 130, 0.92), rgba(11, 32, 70, 0.96));
+      border-width: 2px;
+      flex-direction: row;
+      gap: 12px;
+      text-align: left;
+      padding: 12px 18px;
+    }
+
+    .bp-node-icon {
+      font-size: 23px;
+      line-height: 1;
+      margin-bottom: 4px;
+      filter: drop-shadow(0 0 8px rgba(147, 197, 253, 0.5));
+    }
+
+    .core-hub .bp-node-icon {
+      font-size: 30px;
+      margin-bottom: 0;
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(59, 130, 246, 0.25);
+      border: 1px solid rgba(147, 197, 253, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .bp-node-title {
+      font-size: 12px;
+      font-weight: 800;
+      color: #f8fafc;
+      line-height: 1.2;
+    }
+
+    .core-hub .bp-node-title {
+      font-size: 15px;
+      letter-spacing: 0.02em;
+    }
+
+    .bp-node-sub {
+      font-size: 10.5px;
+      color: #93c5fd;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      margin-top: 2px;
+    }
+
+    .bp-node-badge {
+      position: absolute;
+      top: -9px;
+      right: -6px;
+      font-size: 9.5px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #0f172a;
+      border: 1px solid var(--accent-cyan);
+      color: var(--accent-cyan);
+      text-transform: uppercase;
+    }
+
+    /* Barras Paralelas Estilo Imagen de Referencia */
+    .bp-bar {
+      position: absolute;
+      background: linear-gradient(90deg, rgba(16, 44, 92, 0.9), rgba(29, 78, 216, 0.45));
+      border: 1.5px solid rgba(96, 165, 250, 0.5);
+      border-radius: 8px;
+      padding: 5px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      z-index: 5;
+      box-shadow: 0 0 14px rgba(59, 130, 246, 0.22);
+    }
+
+    .bp-bar:hover, .bp-bar.selected {
+      border-color: var(--accent-amber);
+      box-shadow: 0 0 20px rgba(251, 191, 36, 0.55);
+      transform: scale(1.02);
+    }
+
+    .bp-bar-lines {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      width: 100%;
+    }
+
+    .bp-bar-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #e0f2fe;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .bp-bar-decor {
+      height: 3px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #60a5fa, rgba(96, 165, 250, 0.1));
+      width: 75%;
+    }
+
+    /* Pie del Lienzo */
+    .stage-footer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(8, 22, 46, 0.85);
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      border-radius: 12px;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      z-index: 10;
+    }
+
+    .legend-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+
+    /* Panel Inspector Lateral (Derecha) */
+    .inspector-panel {
+      background: var(--bg-panel);
+      border-left: 1px solid var(--border-blue);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      max-height: calc(100vh - 125px);
+    }
+
+    @media (max-width: 1120px) {
+      .inspector-panel {
+        border-left: none;
+        border-top: 1px solid var(--border-blue);
+        max-height: none;
+      }
+    }
+
+    .inspector-header {
+      border-bottom: 1px solid rgba(96, 165, 250, 0.25);
+      padding-bottom: 12px;
+    }
+
+    .inspector-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    .badge-status {
+      background: rgba(52, 211, 153, 0.16);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+    }
+
+    .badge-file {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      font-family: ui-monospace, monospace;
+    }
+
+    .inspector-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.25;
+    }
+
+    /* Cajas Explicativas */
+    .info-card {
+      background: rgba(12, 31, 61, 0.75);
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      border-radius: 12px;
+      padding: 13px;
+    }
+
+    .info-card.simple-explain {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(12, 31, 61, 0.85));
+      border-color: rgba(251, 191, 36, 0.45);
+    }
+
+    .info-card-header {
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .simple-explain .info-card-header {
+      color: var(--accent-amber);
+    }
+
+    .tech-explain .info-card-header {
+      color: var(--accent-cyan);
+    }
+
+    .info-card p, .info-card li {
+      font-size: 13px;
+      line-height: 1.55;
+      color: #e2e8f0;
+    }
+
+    .info-card ul {
+      padding-left: 18px;
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .code-box {
+      background: #030812;
+      border: 1px solid rgba(96, 165, 250, 0.35);
+      border-radius: 10px;
+      padding: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11.5px;
+      line-height: 1.45;
+      color: #bae6fd;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .connected-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .conn-pill {
+      background: rgba(30, 58, 138, 0.5);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      color: #e0f2fe;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .conn-pill:hover {
+      border-color: var(--accent-amber);
+      background: rgba(245, 158, 11, 0.25);
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- CABECERA PRINCIPAL -->
+  <header class="top-header">
+    <div class="brand-block">
+      <div class="brand-logo" title="Mascota Oficial Chispa Curiosa">🔥</div>
+      <div>
+        <div class="brand-title">
+          EvaluEdu · Mapa Arquitectónico Interactivo
+          <span class="version-pill" id="header-version">v1.2 · SW v12 · 91/91 Tests</span>
+        </div>
+        <div class="brand-subtitle">
+          Documentación visual viva: Conexiones Cloud (Supabase, GitHub), Herramientas (Node.js, Vite), Sistema JSON y Contratos de Actividades
+        </div>
+      </div>
+    </div>
+
+    <div class="tour-controls">
+      <input type="text" id="node-search" class="search-input" placeholder="🔍 Buscar nodo, tabla o archivo..." oninput="handleSearch(this.value)" />
+      <button class="action-btn" onclick="toggleGuidedTour()" id="tour-btn">▶ Recorrido Guiado</button>
+      <button class="tab-btn" onclick="zoomCanvas(-0.1)" title="Alejar">➖</button>
+      <button class="tab-btn" onclick="zoomCanvas(0.1)" title="Acercar">➕</button>
+    </div>
+  </header>
+
+  <!-- SELECTOR DE LOS 6 CIRCUITOS -->
+  <nav class="circuit-tabs">
+    <div class="tabs-group">
+      <button class="tab-btn active" id="tab-ecosystem" onclick="switchCircuit('ecosystem')">🌐 1. Ecosistema Global y Conexiones</button>
+      <button class="tab-btn" id="tab-stack" onclick="switchCircuit('stack')">🛠️ 2. Programas e Instalaciones (Node.js/Git)</button>
+      <button class="tab-btn" id="tab-json" onclick="switchCircuit('json')">📦 3. Tubería del Sistema JSON (v1 y v2)</button>
+      <button class="tab-btn" id="tab-contracts" onclick="switchCircuit('contracts')">🧩 4. Contratos de las 6 Actividades</button>
+      <button class="tab-btn" id="tab-rooms" onclick="switchCircuit('rooms')">🔄 5. Flujo de Salas, Alumnos y PDF A4</button>
+      <button class="tab-btn" id="tab-database" onclick="switchCircuit('database')">🗄️ 6. Base de Datos Supabase (9 Tablas RLS)</button>
+    </div>
+  </nav>
+
+  <!-- ESPACIO DE TRABAJO: LIENZO BLUEPRINT + PANEL INSPECTOR -->
+  <main class="workspace">
+
+    <!-- LIENZO BLUEPRINT (IZQUIERDA) -->
+    <section class="blueprint-stage">
+      <div class="circuit-banner">
+        <div>
+          <h2 id="circuit-title">🌐 Circuito 1: Ecosistema Global de EvaluEdu y Conexiones Externas</h2>
+          <p id="circuit-subtitle">Haz clic en cualquier nodo o barra del circuito para iluminar sus cables ortogonales y leer la explicación sencilla y técnica a la derecha.</p>
+        </div>
+        <span class="badge badge-status" id="circuit-step-indicator">Nodo seleccionado: Núcleo EvaluEdu</span>
+      </div>
+
+      <!-- Contenedor de Nodos y Cables Ortogonales SVG -->
+      <div class="canvas-wrapper" id="canvas-wrapper">
+        <svg class="wires-svg" id="wires-svg" viewBox="0 0 920 520" preserveAspectRatio="none"></svg>
+        <div id="nodes-layer"></div>
+      </div>
+
+      <div class="stage-footer">
+        <div class="legend-items">
+          <span><i class="legend-dot" style="background:#38bdf8;"></i>Flujo de Datos Activo</span>
+          <span><i class="legend-dot" style="background:#fbbf24;"></i>Circuito Seleccionado</span>
+          <span><i class="legend-dot" style="background:#34d399;"></i>Conectado a Supabase / GitHub</span>
+          <span><i class="legend-dot" style="background:#c084fc;"></i>Ejecución Determinista Local</span>
+        </div>
+        <div>Última sincronización de arquitectura: <strong>26/10/2026 (Etapa v1.2 · SW v12)</strong></div>
+      </div>
+    </section>
+
+    <!-- PANEL INSPECTOR LATERAL (DERECHA) -->
+    <aside class="inspector-panel">
+      <div class="inspector-header">
+        <div class="inspector-badges">
+          <span class="badge badge-status" id="insp-status">Conectado y Verificado</span>
+          <span class="badge badge-file" id="insp-file">src/App.tsx</span>
+        </div>
+        <h3 class="inspector-title" id="insp-title">🔥 Núcleo EvaluEdu v1.2</h3>
+      </div>
+
+      <!-- Explicación para cualquier persona -->
+      <div class="info-card simple-explain">
+        <div class="info-card-header">💡 En palabras sencillas (Para cualquier persona)</div>
+        <p id="insp-simple">
+          Es el cerebro central de la aplicación. Recibe a los profesores, estudiantes y administradores, organiza las preguntas del examen, protege las respuestas correctas para que nadie haga trampa y guarda todo en internet o en el celular si se corta el Wi-Fi.
+        </p>
+      </div>
+
+      <!-- Explicación técnica -->
+      <div class="info-card tech-explain">
+        <div class="info-card-header">🔧 Cómo funciona por dentro (Desarrollo y Reglas)</div>
+        <ul id="insp-bullets"></ul>
+      </div>
+
+      <!-- Código / Contrato JSON / SQL -->
+      <div class="info-card">
+        <div class="info-card-header" style="color:#93c5fd;">💻 Contrato / Estructura / Comando Real</div>
+        <pre class="code-box" id="insp-code"></pre>
+      </div>
+
+      <!-- Nodos conectados -->
+      <div class="info-card">
+        <div class="info-card-header" style="color:#cbd5e1;">🔗 Conectado directamente con (Haz clic para saltar):</div>
+        <div class="connected-pills" id="insp-connections"></div>
+      </div>
+    </aside>
+
+  </main>
+  <script>
+    // ============================================================================
+    // ARCHITECTURE_REGISTRY: Fuente única de verdad del diagrama vivo de EvaluEdu
+    // Actualizar este objeto cada vez que se modifique la aplicación o sus tablas.
+    // ============================================================================
+    const ARCHITECTURE_REGISTRY = {
+      ecosystem: {
+        title: '🌐 Circuito 1: Ecosistema Global de EvaluEdu y Conexiones Externas',
+        subtitle: 'Mapa general con la misma disposición de circuito Blueprint: cómo interactúan usuarios, IA externa desacoplada, motor local, Supabase y GitHub Pages.',
+        wires: [
+          { id: 'w-roles-val', d: 'M 150 260 L 235 260' },
+          { id: 'w-ai-json', d: 'M 95 360 L 95 425 L 200 425' },
+          { id: 'w-json-val', d: 'M 265 390 L 265 300' },
+          { id: 'w-json-core', d: 'M 330 425 L 430 425 L 430 305' },
+          { id: 'w-val-core', d: 'M 325 260 L 385 260' },
+          { id: 'w-core-act', d: 'M 435 215 L 435 155 L 265 155 L 265 118' },
+          { id: 'w-act-bars', d: 'M 310 75 L 355 75 M 335 75 L 335 38 L 355 38 M 335 75 L 335 112 L 355 112 M 535 38 L 555 38 L 555 112 L 535 112 M 535 75 L 590 75' },
+          { id: 'w-core-db', d: 'M 495 215 L 495 155 L 635 155 L 635 120' },
+          { id: 'w-core-edge', d: 'M 555 260 L 635 260' },
+          { id: 'w-edge-gh', d: 'M 680 215 L 680 95 L 780 95' },
+          { id: 'w-edge-sync', d: 'M 680 305 L 680 415 L 775 415' },
+          { id: 'w-core-pdf', d: 'M 505 305 L 505 425 L 555 425' }
+        ],
+        nodes: [
+          {
+            id: 'core', type: 'core', x: 385, y: 215, w: 170, h: 90,
+            icon: '🔥', title: 'EVALUEDU', sub: 'Núcleo v1.2 · React 19', badge: 'CORE',
+            wires: ['w-val-core', 'w-core-act', 'w-core-db', 'w-core-edge', 'w-core-pdf', 'w-json-core'],
+            status: 'Activo en Producción y Local',
+            file: 'src/App.tsx + src/lib/activityEngine.ts',
+            simple: 'Es el cerebro central de EvaluEdu (representado por la mascota Chispa Curiosa). Recibe a profesores, estudiantes y administradores; organiza las salas de evaluación; protege las respuestas correctas para que nadie las vea antes de tiempo y coordina el guardado en internet (Supabase) o en el propio dispositivo si falla la señal.',
+            bullets: [
+              'Arquitectura PWA (Progressive Web App) responsive para celulares Android, iOS y computadoras con modo Día y Noche.',
+              'Verifica permisos reales contra Supabase (profiles) antes de abrir los paneles de Docente o Administrador.',
+              'Ejecuta el motor determinista de las 6 actividades (activityEngine.ts) sin usar formularios genéricos.',
+              'Mantiene una cola de sincronización local (localStorage) idempotente cuando no hay conexión a internet.'
+            ],
+            code: `// Flujo central de EvaluEdu v1.2\nRol Verificado -> Plantilla / JSON Validado\n  -> 6 Contratos Modulares (src/lib/activities/*.ts)\n  -> Sala en Vivo (Supabase Realtime + Edge Functions)\n  -> Retroalimentación con Pistas (Hints) + Reporte CSV/PDF`,
+            connections: ['roles', 'val', 'act6', 'db', 'edge', 'pdf']
+          },
+          {
+            id: 'roles', x: 45, y: 218, w: 105, h: 84,
+            icon: '👤', title: '3 Roles Acceso', sub: 'Docente/Alumno/Admin', badge: 'AUTH',
+            wires: ['w-roles-val'],
+            status: 'Conectado a Supabase Auth',
+            file: 'src/App.tsx (RoleLanding / AuthScreen)',
+            simple: 'La puerta de entrada con tres caminos claros: el Profesor (crea temas, aprueba preguntas y abre salas), el Estudiante (entra solo con un código corto y su nombre, sin tener que crear cuenta ni recordar contraseñas) y el Administrador (invita profesores y supervisa la plataforma).',
+            bullets: [
+              'Elegir un icono en la pantalla de bienvenida nunca otorga permisos por sí solo: el backend verifica la sesión JWT y la tabla profiles.',
+              'El registro público está cerrado para impedir que alumnos creen cuentas de docente.',
+              'Los docentes ingresan por invitación de correo o por Contraseña Directa creada desde el panel de Administración.',
+              'El estudiante entra mediante código de sala (ej. EDU-360) con un solo intento permitido por sala.'
+            ],
+            code: `// Verificación estricta de rol en inicio de sesión\nconst profile = await getProfile(session.user.id);\nif (profile.role !== selectedRole) {\n  blockPanelAndRedirect(profile.role);\n}`,
+            connections: ['core', 'edge', 'db']
+          },
+          {
+            id: 'ai', x: 42, y: 318, w: 108, h: 72,
+            icon: '🤖', title: 'IA Externa', sub: 'Prompt Oficial Docente', badge: 'EXTERNA',
+            wires: ['w-ai-json'],
+            status: '100% Desacoplada (Sin API Keys)',
+            file: 'Prompt Oficial en Modal de Importación',
+            simple: 'Para ayudar al profesor a no escribir todo desde cero, EvaluEdu le entrega una instrucción ("Prompt Oficial"). El profesor la copia y la pega junto con su tema de clase en cualquier inteligencia artificial gratuita (ChatGPT, Claude, Gemini). Esa IA le devuelve el código JSON listo para pegar en EvaluEdu.',
+            bullets: [
+              'EvaluEdu NO genera contenido con IA por cuenta propia ni envía datos de los docentes o alumnos a servidores externos de IA.',
+              'Esto garantiza costo $0 en tokens de IA, privacidad total y libertad para que el docente use la IA de su preferencia.',
+              'La IA externa no tiene la última palabra: todo lo que produce pasa por el Validador Local y requiere aprobación del docente.'
+            ],
+            code: `Flujo Desacoplado:\n1. Docente copia el Prompt Oficial desde EvaluEdu\n2. Pega su tema en ChatGPT / Claude / Gemini\n3. Recibe el bloque JSON "edueval.content" v2\n4. Lo pega o sube como archivo .json en EvaluEdu`,
+            connections: ['json']
+          },
+          {
+            id: 'json', x: 200, y: 390, w: 130, h: 72,
+            icon: '</>', title: 'Contrato JSON', sub: 'edueval.content v2', badge: 'SCHEMA',
+            wires: ['w-ai-json', 'w-json-val', 'w-json-core'],
+            status: 'Implementado (Soporta v1 y v2)',
+            file: 'src/lib/contentImport.ts',
+            simple: 'Es el formato ordenado en el que entran los temas y preguntas a la aplicación. Funciona como una planilla digital estricta: si un archivo cumple las reglas del contrato JSON, EvaluEdu lo convierte automáticamente en actividades interactivas.',
+            bullets: [
+              'Acepta carga por archivo (.json) o pegado directo desde el portapapeles.',
+              'No intenta adivinar documentos Word o PDF desordenados para evitar errores en los exámenes.',
+              'Admite tanto el contrato v1 (plantilla conceptual) como el contrato v2 (banco completo de las 6 actividades con details).'
+            ],
+            code: `{\n  "schema": "edueval.content",\n  "version": 2,\n  "topic": {\n    "title": "El Ciclo del Agua",\n    "subject": "Ciencias Naturales",\n    "objective": "Comprender las fases..."\n  },\n  "activities": [ ... ]\n}`,
+            connections: ['ai', 'val', 'core']
+          },
+          {
+            id: 'val', x: 235, y: 218, w: 92, h: 84,
+            icon: '⚙️', title: 'Validador', sub: '3 Niveles Local', badge: 'FILTRO',
+            wires: ['w-roles-val', 'w-json-val', 'w-val-core'],
+            status: 'Autoridad Final Local',
+            file: 'src/lib/contentImport.ts (parseContentImport)',
+            simple: 'Es el inspector de calidad de EvaluEdu. Antes de aceptar cualquier contenido, revisa que no falten preguntas, que exista una respuesta correcta clara y que cada ejercicio tenga su pista de ayuda para el estudiante. Si algo está mal, avisa exactamente en qué renglón está el fallo.',
+            bullets: [
+              'Nivel 1 (Validez de Contrato): Verifica JSON válido, versión 1 o 2, tipos de datos y límites de texto.',
+              'Nivel 2 (Preparación Pedagógica): Revisa que existan objetivo, competencia y contexto formativo.',
+              'Nivel 3 (Compatibilidad de Actividad): Comprueba evidencia suficiente para calificar cada formato.',
+              'Deja las actividades importadas en estado "pending" hasta que el docente las revise y apruebe.'
+            ],
+            code: `// Si falta una pista o clave, indica la ruta exacta:\n[\n  "activities[1].hint: Debes incluir una pista orientadora",\n  "activities[3].categories: Mínimo 2 categorías únicas"\n]`,
+            connections: ['json', 'core', 'act6']
+          },
+          {
+            id: 'act6', x: 215, y: 40, w: 95, h: 78,
+            icon: '🧩', title: '6 Contratos', sub: 'Actividades v1.2', badge: 'MÓDULOS',
+            wires: ['w-core-act', 'w-act-bars'],
+            status: '91/91 Pruebas en Verde',
+            file: 'src/lib/activities/*.ts',
+            simple: 'Son los 6 tipos de ejercicios interactivos que los alumnos resuelven en su pantalla, ordenados desde el más sencillo hasta el más desafiante. Cada uno tiene sus propias reglas para no mezclar peras con manzanas.',
+            bullets: [
+              '1. Falso / Verdadero (trueFalse.ts)',
+              '2. Selección Múltiple con única respuesta (singleChoice.ts)',
+              '3. Asociación tocando columnas con insignias de colores (matching.ts)',
+              '4. Clasificación arrastrando o tocando categorías (sorting.ts)',
+              '5. Ordenamiento de pasos con desorden garantizado (ordering.ts)',
+              '6. Escenario de decisiones por etapas con consecuencias (scenario.ts)'
+            ],
+            code: `// Módulos independientes en src/lib/activities/:\ntrueFalse.ts   | singleChoice.ts | matching.ts\nsorting.ts     | ordering.ts     | scenario.ts`,
+            connections: ['core', 'bars', 'db']
+          },
+          {
+            id: 'bars', type: 'bars', x: 355, y: 20, w: 180, h: 112,
+            wires: ['w-act-bars'],
+            status: 'Doble Capa: Privada vs Pública',
+            file: 'to*Public() & evaluate*()',
+            simple: 'Estas tres barras paralelas representan el túnel de seguridad por el que pasan las 6 actividades: separa lo que ve el profesor (la solución secreta y la explicación técnica) de lo que viaja al celular del estudiante (solo la pregunta y opciones desordenadas).',
+            bullets: [
+              'Barra 1 (Nivel Básico): Falso/Verdadero y Selección Única sin opción marcada por defecto.',
+              'Barra 2 (Nivel Relacional): Asociación biunívoca por columnas y Clasificación con banco barajado.',
+              'Barra 3 (Nivel Complejo): Ordenamiento (nunca sale resuelto por azar) y Escenario de decisiones.'
+            ],
+            code: `Docente (Privado): { correct, recommended, explanation }\n   │  Filtro de seguridad to*Public()\n   ▼\nEstudiante (Público): { prompt, options, hint (al confirmar) }`,
+            connections: ['act6', 'db', 'core']
+          },
+          {
+            id: 'db', x: 590, y: 38, w: 100, h: 82,
+            icon: '🗄️', title: 'Supabase DB', sub: 'PostgreSQL + RLS', badge: 'CLOUD',
+            wires: ['w-act-bars', 'w-core-db'],
+            status: 'Conectado (Región sa-east-1)',
+            file: 'src/lib/supabase.ts + 9 Tablas SQL',
+            simple: 'Es la bóveda en la nube donde se guardan de forma segura las cuentas de los profesores, sus plantillas, las salas de examen y las respuestas de los estudiantes. Tiene candados inteligentes (RLS) para que cada profesor vea únicamente sus propias salas y resultados.',
+            bullets: [
+              'Proyecto Supabase activo en Sudamérica (sa-east-1) con Row Level Security (RLS) en las 9 tablas.',
+              'Conectado desde el frontend únicamente mediante VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY.',
+              'La llave maestra (service_role) jamás se coloca en el navegador.'
+            ],
+            code: `9 Tablas con RLS habilitado:\nprofiles, evaluation_templates, activities,\nrooms, room_activities, room_participants,\nattempts, attempt_answers, audit_events`,
+            connections: ['core', 'edge', 'sync']
+          },
+          {
+            id: 'edge', x: 635, y: 218, w: 100, h: 84,
+            icon: '⚡', title: 'Edge Functions', sub: 'Serverless Deno', badge: 'BACKEND',
+            wires: ['w-core-edge', 'w-edge-gh', 'w-edge-sync'],
+            status: '4 Funciones Desplegadas',
+            file: 'supabase/functions/*',
+            simple: 'Son pequeños servidores de alta seguridad dentro de Supabase que hacen las tareas delicadas: enviar invitaciones a nuevos profesores, dejar entrar a los estudiantes con su código de sala y calificar el examen en el servidor para que nadie pueda alterar su nota desde el navegador.',
+            bullets: [
+              'admin-invite-teacher: Verifica rol admin e invita docentes por correo.',
+              'admin-create-pilot-teacher: Permite al admin crear cuentas docentes con contraseña directa.',
+              'student-room-guest: Valida código de sala, registra al alumno con hash de token temporal y entrega actividades sanitizadas.',
+              'student-room-sync: Recibe respuestas del estudiante y recalcula el puntaje real en el servidor.'
+            ],
+            code: `// Todas las funciones exigen verificación:\nverify_jwt = true\n// El puntaje final se recalcula en backend\n// comparando contra la actividad privada.`,
+            connections: ['core', 'db', 'gh', 'sync']
+          },
+          {
+            id: 'gh', x: 775, y: 52, w: 112, h: 84,
+            icon: '☁️', title: 'GitHub & PWA', sub: 'Actions + Pages v12', badge: 'DEPLOY',
+            wires: ['w-edge-gh'],
+            status: 'Publicado en GitHub Pages',
+            file: '.github/workflows/deploy.yml + public/sw.js',
+            simple: 'Es el sistema que publica la aplicación en internet y permite instalarla como un icono en el celular o computadora. Cada vez que guardamos una mejora en GitHub, un robot automático compila la app y actualiza la página web y los celulares de los alumnos.',
+            bullets: [
+              'Repositorio oficial: github.com/elmeryale99torrez-prog/EduEval (rama main).',
+              'GitHub Actions ejecuta "tsc -b && vite build" y publica la carpeta dist/ en GitHub Pages.',
+              'Service Worker (evaluedu-shell-v12) e iconos PNG/SVG de la Chispa Curiosa permiten instalar la PWA y actualizar la caché automáticamente.'
+            ],
+            code: `URL Oficial:\nhttps://elmeryale99torrez-prog.github.io/EduEval/\n\nCaché PWA activa: evaluedu-shell-v12`,
+            connections: ['edge', 'core']
+          },
+          {
+            id: 'pdf', x: 555, y: 390, w: 105, h: 74,
+            icon: '✨', title: 'Hints, PDF & CSV', sub: 'Iframe A4 + Excel', badge: 'SALIDA',
+            wires: ['w-core-pdf'],
+            status: 'Implementado y Homologado',
+            file: 'ExamDocumentModal + exportCsv()',
+            simple: 'Es el sistema de entrega de resultados y documentos: al estudiante le da pistas orientadoras durante el examen y un Comprobante Oficial al terminar (sin mostrarle nota ni ranking). Al profesor le permite imprimir el examen en blanco en papel A4 y descargar una planilla Excel (CSV) con todo el detalle.',
+            bullets: [
+              'El estudiante recibe retroalimentación formativa (hint) sin ver la respuesta correcta ni calificación final.',
+              'Generador HTML/PDF en iframe aislado (printExamDocument) que evita hojas en blanco al imprimir.',
+              'El Examen en Blanco en papel excluye automáticamente los Escenarios de Decisiones por ser interactivos digitales.',
+              'Exportación privada CSV compatible con Excel con tiempos, aciertos, omisiones, pistas y explicaciones.'
+            ],
+            code: `Salidas generadas:\n1. Estudiante: Comprobante Oficial (.html / PDF / .txt)\n2. Docente: Examen en Blanco A4 (sin escenarios)\n3. Docente: evaluedu-resultados-[codigo].csv`,
+            connections: ['core']
+          },
+          {
+            id: 'sync', x: 775, y: 378, w: 112, h: 78,
+            icon: '🔄', title: 'Realtime & Cola', sub: 'WebSockets + Offline', badge: 'SYNC',
+            wires: ['w-edge-sync'],
+            status: 'Sincronización Idempotente',
+            file: 'localStorage Queue + Supabase Realtime',
+            simple: 'Es el salvavidas contra cortes de internet. Mantiene conectada la pantalla del profesor con la de los estudiantes en vivo, y si en el aula falla el Wi-Fi por un momento, guarda los cambios en la memoria del dispositivo y los sube apenas vuelve la señal.',
+            bullets: [
+              'El panel docente escucha cambios de la tabla rooms mediante Supabase Realtime.',
+              'El estudiante consulta el estado de la sala cada 2,5 segundos con su token temporal y calcula el reloj desde started_at del servidor.',
+              'Cola de sincronización local que reintenta operaciones pendientes de forma idempotente sin duplicar registros.'
+            ],
+            code: `Estado de conexión en cabecera:\n🟢 En línea (Supabase Realtime activo)\n🟡 Modo local / Cola pendiente\n🔴 Sin conexión (Respaldo en localStorage)`,
+            connections: ['edge', 'db', 'core']
+          }
+        ]
+      },
+
+      // ==========================================================================
+      // CIRCUITO 2: PROGRAMAS, HERRAMIENTAS E INSTALACIONES NECESARIAS
+      // ==========================================================================
+      stack: {
+        title: '🛠️ Circuito 2: Programas Instalados y Herramientas de Desarrollo',
+        subtitle: 'Todo el software que fue necesario instalar y configurar en Windows y en la nube (Node.js, npm, Git, TypeScript, Vite, Vitest) para construir y desplegar EvaluEdu.',
+        wires: [
+          { id: 's-node-npm', d: 'M 155 120 L 245 120' },
+          { id: 's-npm-vite', d: 'M 355 120 L 420 120 L 420 215' },
+          { id: 's-git-gh', d: 'M 155 390 L 245 390' },
+          { id: 's-gh-vite', d: 'M 355 390 L 420 390 L 420 305' },
+          { id: 's-env-vite', d: 'M 200 260 L 385 260' },
+          { id: 's-vite-ts', d: 'M 555 240 L 635 240 L 635 120' },
+          { id: 's-vite-vitest', d: 'M 555 260 L 635 260' },
+          { id: 's-vite-dist', d: 'M 555 280 L 635 280 L 635 395 L 745 395' },
+          { id: 's-ts-dist', d: 'M 735 120 L 800 120 L 800 355' }
+        ],
+        nodes: [
+          {
+            id: 'node', x: 45, y: 78, w: 110, h: 84,
+            icon: '🟢', title: 'Node.js LTS', sub: 'v24.22.1 (Windows)', badge: 'MOTOR PC',
+            wires: ['s-node-npm'],
+            status: 'Instalado en Windows',
+            file: 'Entorno del Sistema Operativo',
+            simple: 'Es el programa base que instalamos en la computadora Windows para poder ejecutar código JavaScript y TypeScript fuera del navegador. Sin Node.js, la computadora no podría encender el servidor de pruebas ni empaquetar la aplicación.',
+            bullets: [
+              'Versión instalada y habilitada en esta estación de trabajo: Node.js LTS v24.22.1.',
+              'Permite ejecutar el compilador de TypeScript, el empaquetador Vite y el motor de pruebas Vitest.',
+              'Solo se necesita en la computadora donde se programa (o en el robot de GitHub Actions); los estudiantes y profesores NO necesitan instalar Node.js para usar la app.'
+            ],
+            code: `# Comprobar versión instalada en PowerShell:\nnode -v\n# -> v24.22.1`,
+            connections: ['npm', 'vite']
+          },
+          {
+            id: 'npm', x: 245, y: 78, w: 110, h: 84,
+            icon: '📦', title: 'npm + Módulos', sub: 'npm 11.19.1', badge: 'PAQUETES',
+            wires: ['s-node-npm', 's-npm-vite'],
+            status: 'node_modules Instalado',
+            file: 'package.json + package-lock.json',
+            simple: 'Viene junto con Node.js y funciona como un descargador oficial de piezas de software. Lee la lista del archivo package.json y descarga en la carpeta node_modules todas las librerías necesarias (React, Supabase, Vite).',
+            bullets: [
+              'Versión instalada: npm 11.19.1.',
+              'Ejecuta los 4 comandos principales del proyecto definidos en package.json: dev, build, preview y test.',
+              'Mantiene congeladas las versiones exactas en package-lock.json para que funcione igual en tu PC y en GitHub.'
+            ],
+            code: `npm install       # Descarga node_modules\nnpm run dev       # Abre servidor local\nnpm run test      # Corre las 91 pruebas\nnpm run build     # Compila para producción`,
+            connections: ['node', 'vite', 'vitest']
+          },
+          {
+            id: 'env', x: 65, y: 218, w: 135, h: 84,
+            icon: '🔑', title: 'Archivo .env.local', sub: 'Llaves de Conexión', badge: 'CONFIG',
+            wires: ['s-env-vite'],
+            status: 'Configurado y Protegido',
+            file: '.env.local + .env.example',
+            simple: 'Es un archivo privado guardado únicamente en tu computadora que tiene la dirección y la llave pública para conectarse a nuestra base de datos de Supabase. Está bloqueado para no subirse nunca por accidente a lugares públicos.',
+            bullets: [
+              'Contiene VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY.',
+              'Excluido de Git mediante .gitignore por seguridad.',
+              'Si este archivo no existe, EvaluEdu no se rompe: entra automáticamente en "Modo Demo Local" usando localStorage.'
+            ],
+            code: `# Contenido de .env.local (Nunca incluir service_role)\nVITE_SUPABASE_URL=https://hjcspzgglchnksnrcwmd.supabase.co\nVITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...`,
+            connections: ['vite']
+          },
+          {
+            id: 'git', x: 45, y: 348, w: 110, h: 84,
+            icon: '🌿', title: 'MinGit / Git', sub: 'v2.56.0.3', badge: 'VERSIONES',
+            wires: ['s-git-gh'],
+            status: 'Instalado y Vinculado',
+            file: '.git/ + Copias .bak',
+            simple: 'Es la máquina del tiempo del código. Se instaló en Windows para guardar "fotografías" seguras (commits) de cada avance de EvaluEdu y poder volver atrás de inmediato si algo sale mal, además de enviar el código a GitHub.',
+            bullets: [
+              'Instalado en el entorno: MinGit v2.56.0.3.',
+              'Permite crear puntos de retorno seguros antes de tocar contratos o interfaz.',
+              'Conecta la carpeta local con el repositorio remoto en GitHub.'
+            ],
+            code: `git status\ngit add .\ngit commit -m "Actualización v1.2"\ngit push origin main`,
+            connections: ['ghrepo']
+          },
+          {
+            id: 'ghrepo', x: 245, y: 348, w: 110, h: 84,
+            icon: '🐙', title: 'GitHub Repo', sub: 'Actions CI/CD', badge: 'REMOTO',
+            wires: ['s-git-gh', 's-gh-vite'],
+            status: 'Despliegue Automático Activo',
+            file: '.github/workflows/deploy.yml',
+            simple: 'Es la casa del código en internet. Cada vez que Git sube un cambio a la rama principal ("main"), GitHub enciende un servidor virtual gratuito (GitHub Actions), instala Node.js en la nube, compila la app y actualiza la web pública.',
+            bullets: [
+              'Repositorio: github.com/elmeryale99torrez-prog/EduEval.',
+              'Flujo automatizado en .github/workflows/deploy.yml.',
+              'Publica automáticamente el resultado en GitHub Pages sin intervención manual.'
+            ],
+            code: `# .github/workflows/deploy.yml\non:\n  push:\n    branches: [main]\nsteps:\n  - run: npm ci\n  - run: npm run build`,
+            connections: ['git', 'vite', 'dist']
+          },
+          {
+            id: 'vite', type: 'core', x: 385, y: 215, w: 170, h: 90,
+            icon: '⚡', title: 'REACT 19 + VITE 8', sub: 'Stack Principal UI', badge: 'BUILDER',
+            wires: ['s-npm-vite', 's-gh-vite', 's-env-vite', 's-vite-ts', 's-vite-vitest', 's-vite-dist'],
+            status: 'React 19.2.8 + Vite 8.3.0',
+            file: 'vite.config.ts + index.html',
+            simple: 'Es el motor que dibuja todas las pantallas interactivas (React 19) y el empaquetador ultrarrápido (Vite 8) que une todo el código, los estilos CSS y los iconos vectoriales en archivos ligeros listos para celulares y computadoras.',
+            bullets: [
+              'React 19.2.8 + React DOM para renderizado reactivo de alta velocidad.',
+              'Vite 8.3.0 configurado con base relativa ("./") en vite.config.ts para funcionar perfecto dentro de la subruta /EduEval/ de GitHub Pages.',
+              'Tipografía oficial Plus Jakarta Sans + Iconos SVG vectoriales propios en src/lib/icons.tsx.'
+            ],
+            code: `// package.json dependencies:\n"react": "^19.2.8",\n"react-dom": "^19.2.8",\n"@supabase/supabase-js": "^2.117.2",\n"vite": "^8.3.0"`,
+            connections: ['npm', 'env', 'ts', 'vitest', 'dist']
+          },
+          {
+            id: 'ts', x: 625, y: 78, w: 110, h: 84,
+            icon: '📘', title: 'TypeScript 6', sub: 'tsc -b (~6.0.2)', badge: 'TIPADO',
+            wires: ['s-vite-ts', 's-ts-dist'],
+            status: '0 Errores de Compilación',
+            file: 'tsconfig.json + tsconfig.app.json',
+            simple: 'Es un detector de errores antes de publicar. Revisa que ninguna función reciba un dato equivocado (por ejemplo, que una pregunta de Falso/Verdadero no reciba por error una respuesta de Ordenamiento). Si hay un error de tipo, impide publicar hasta corregirlo.',
+            bullets: [
+              'Versión configurada: TypeScript ~6.0.2.',
+              'Se ejecuta obligatoriamente con "tsc -b" antes de cada "vite build".',
+              'Garantiza que los contratos de las 6 actividades y el esquema JSON mantengan integridad estricta.'
+            ],
+            code: `// Compilación estricta:\ntsc -b && vite build\n// Si un contrato no coincide, detiene el build.`,
+            connections: ['vite', 'dist']
+          },
+          {
+            id: 'vitest', x: 635, y: 218, w: 115, h: 84,
+            icon: '🧪', title: 'Vitest 5.0', sub: '91/91 Tests OK', badge: 'CALIDAD',
+            wires: ['s-vite-vitest'],
+            status: '14 Suites Aprobadas (100%)',
+            file: 'src/lib/**/*.test.ts',
+            simple: 'Es un robot probador que ejecuta 91 exámenes automáticos sobre el código en menos de 2 segundos. Verifica que las 6 actividades califiquen bien los aciertos, los errores, las preguntas omitidas y el tiempo agotado.',
+            bullets: [
+              'Versión instalada: Vitest ^5.0.3.',
+              '14 archivos de prueba (.test.ts) cubriendo pruebas unitarias y de integración de las 6 actividades y del importador JSON.',
+              'Regla operativa de AGENTS.md: ejecutar siempre "npm run test" y "npm run build" tras cada etapa.'
+            ],
+            code: `Test Files  14 passed (14)\n     Tests  91 passed (91)\n  Zero regressions detected.`,
+            connections: ['vite', 'npm']
+          },
+          {
+            id: 'dist', x: 745, y: 355, w: 130, h: 84,
+            icon: '📱', title: 'Build dist/ + PWA', sub: 'Service Worker v12', badge: 'PRODUCCIÓN',
+            wires: ['s-vite-dist', 's-ts-dist'],
+            status: 'Listo para Instalar en Móvil/PC',
+            file: 'dist/ + public/sw.js + manifest.webmanifest',
+            simple: 'Es el producto final terminado. Cuando todo aprueba, Vite genera la carpeta "dist/" con el manifiesto y los iconos de la Chispa Curiosa para que cualquier estudiante o profesor pueda instalar EvaluEdu como aplicación nativa en su teléfono Android, iPhone o PC.',
+            bullets: [
+              'Incluye public/manifest.webmanifest con iconos PNG (192x192, 512x512, maskable) y SVG.',
+              'Service Worker (evaluedu-shell-v12) que limpia cachés viejas automáticamente y permite abrir la carcasa offline.',
+              'Escalado ergonómico móvil (+15% en pantallas < 600px) y bloqueo de scroll de fondo en modales.'
+            ],
+            code: `Archivos clave en public/ y dist/:\n- manifest.webmanifest (?v=12)\n- sw.js (CACHE_NAME = 'evaluedu-shell-v12')\n- icon-192.png, icon-512.png, icon.svg`,
+            connections: ['vite', 'ts', 'ghrepo']
+          }
+        ]
+      },
+
+      // ==========================================================================
+      // CIRCUITO 3: TUBERÍA DEL SISTEMA JSON (edueval.content v1 y v2)
+      // ==========================================================================
+      json: {
+        title: '📦 Circuito 3: Tubería del Sistema JSON (edueval.content v1 y v2)',
+        subtitle: 'Recorrido interno desde que el docente prepara su tema y pega el JSON hasta que supera los 3 niveles de validación y se convierte en actividades aprobadas.',
+        wires: [
+          { id: 'j-doc-ia', d: 'M 145 120 L 235 120' },
+          { id: 'j-ia-paste', d: 'M 345 120 L 425 120 L 425 215' },
+          { id: 'j-paste-l1', d: 'M 385 260 L 180 260' },
+          { id: 'j-l1-l2', d: 'M 125 300 L 125 385' },
+          { id: 'j-l2-l3', d: 'M 180 425 L 285 425' },
+          { id: 'j-l3-tpl', d: 'M 395 425 L 490 425' },
+          { id: 'j-tpl-pend', d: 'M 600 425 L 680 425 L 680 300' },
+          { id: 'j-pend-rev', d: 'M 680 218 L 680 120 L 755 120' },
+          { id: 'j-rev-room', d: 'M 810 162 L 810 385' }
+        ],
+        nodes: [
+          {
+            id: 'jdoc', x: 40, y: 78, w: 105, h: 84,
+            icon: '📚', title: '1. Tema Docente', sub: 'Apuntes + Prompt', badge: 'ORIGEN',
+            wires: ['j-doc-ia'],
+            status: 'Paso Inicial Docente',
+            file: 'Contenido Pedagógico del Profesor',
+            simple: 'El profesor tiene su material de clase (por ejemplo, "La Revolución Industrial" o "El Ciclo del Agua"). En lugar de llenar 50 casillas a mano, abre EvaluEdu y copia el "Prompt Oficial" diseñado para estructurar ese tema.',
+            bullets: [
+              'Regla de oro pedagógica: la conversión no debe inventar objetivos, competencias ni relaciones que el docente no haya proporcionado o revisado.',
+              'También existe un Constructor Manual de Plantilla como vía alternativa de respaldo.'
+            ],
+            code: `Material del Docente (Texto de clase)\n  + Prompt Oficial de EvaluEdu\n  -> Listo para pegar en IA externa`,
+            connections: ['jia']
+          },
+          {
+            id: 'jia', x: 235, y: 78, w: 110, h: 84,
+            icon: '🤖', title: '2. Conversión IA', sub: 'Genera JSON v2', badge: 'FORMATO',
+            wires: ['j-doc-ia', 'j-ia-paste'],
+            status: 'JSON Estructurado',
+            file: 'Contrato edueval.content v2',
+            simple: 'La IA externa organiza el texto del profesor dentro del molde exacto que pide EvaluEdu: separa el título, la materia, el objetivo, el resumen y crea las propuestas de las 6 actividades con sus pistas orientadoras.',
+            bullets: [
+              'Genera un objeto con "schema": "edueval.content" y "version": 2.',
+              'Cada actividad incluye su tipo exacto, su consigna, la clave correcta, la pista pública (hint) y la explicación privada opcional (explanation).'
+            ],
+            code: `{\n  "schema": "edueval.content",\n  "version": 2,\n  "topic": { "title": "...", "subject": "...", "objective": "...", "competency": "...", "summary": "..." },\n  "activities": [ ...6 formatos... ]\n}`,
+            connections: ['jdoc', 'jpaste']
+          },
+          {
+            id: 'jpaste', type: 'core', x: 385, y: 215, w: 165, h: 88,
+            icon: '📥', title: '3. Importador', sub: 'Archivo o Pegado', badge: 'ENTRADA',
+            wires: ['j-ia-paste', 'j-paste-l1'],
+            status: 'Modal Simétrico Móvil/PC',
+            file: 'src/App.tsx + parseContentImport()',
+            simple: 'El profesor pega el texto JSON o selecciona el archivo .json en EvaluEdu y pulsa "Validar contenido". En ese instante se encienden los 3 filtros de seguridad locales.',
+            bullets: [
+              'No envía el archivo a ningún servidor externo para validarlo; ocurre en milisegundos dentro del navegador.',
+              'Dificultad simplificada: si el JSON no especifica dificultad, asigna automáticamente "Intermedio" para no trabar al docente.'
+            ],
+            code: `const result = parseContentImport(rawJsonText);\nif (!result.ok) {\n  showRouteErrors(result.errors);\n}`,
+            connections: ['jia', 'jl1']
+          },
+          {
+            id: 'jl1', x: 70, y: 218, w: 110, h: 82,
+            icon: '🛡️', title: '4. Nivel 1: Esquema', sub: 'Validez Estructural', badge: 'FILTRO 1',
+            wires: ['j-paste-l1', 'j-l1-l2'],
+            status: 'Rechazo Estricto por Ruta',
+            file: 'src/lib/contentImport.ts',
+            simple: 'Primer filtro: revisa que el JSON no esté roto, que tenga la versión correcta, que no existan campos inventados y que ningún texto supere el límite máximo o esté vacío.',
+            bullets: [
+              'Rechaza JSON mal cerrado, versiones desconocidas o propiedades no permitidas.',
+              'Verifica longitudes mínimas y máximas de enunciados, opciones, pasos y pistas.',
+              'Muestra rutas exactas como "activities[2].pairs[0].left" si encuentra un campo vacío.'
+            ],
+            code: `// Validación Nivel 1:\nschema === 'edueval.content'\nversion === 1 || version === 2\nSin propiedades desconocidas ni textos vacíos.`,
+            connections: ['jpaste', 'jl2']
+          },
+          {
+            id: 'jl2', x: 70, y: 385, w: 110, h: 82,
+            icon: '🎓', title: '5. Nivel 2: Pedagogía', sub: 'Objetivo y Contexto', badge: 'FILTRO 2',
+            wires: ['j-l1-l2', 'j-l2-l3'],
+            status: 'Verificación Formativa',
+            file: 'src/lib/contentImport.ts',
+            simple: 'Segundo filtro: comprueba que el material no sea una simple lista de palabras sueltas, sino que tenga un objetivo de aprendizaje, una competencia y un resumen o contexto que oriente la evaluación.',
+            bullets: [
+              'Distingue entre un texto expositivo y un material preparado para evaluar.',
+              'Exige que cada actividad propuesta tenga su pista orientadora (hint) para ayudar al estudiante sin regalarle la respuesta.'
+            ],
+            code: `topic: {\n  title: string (obligatorio),\n  subject: string (obligatorio),\n  objective: string (obligatorio),\n  competency: string (obligatorio)\n}`,
+            connections: ['jl1', 'jl3']
+          },
+          {
+            id: 'jl3', x: 285, y: 385, w: 110, h: 82,
+            icon: '🔍', title: '6. Nivel 3: Evidencia', sub: 'Compatibilidad Real', badge: 'FILTRO 3',
+            wires: ['j-l2-l3', 'j-l3-tpl'],
+            status: 'Validación por Contrato',
+            file: 'validate*Definition()',
+            simple: 'Tercer filtro: revisa que cada actividad tenga la evidencia real para poder corregirse sin trampas. Por ejemplo, que en Clasificación haya al menos 2 categorías con elementos asignados, o que en Selección Múltiple haya exactamente 1 respuesta verdadera.',
+            bullets: [
+              'Invoca los validadores específicos de cada uno de los 6 contratos (validateTrueFalseDefinition, validateSingleChoiceDefinition, etc.).',
+              'Si una actividad no cumple su evidencia mínima, informa exactamente qué falta sin inventar datos falsos.'
+            ],
+            code: `// Evidencia exigida por formato:\n- Falso/Verdadero: statement + boolean correct + hint\n- Selección: 2..6 opciones únicas + 1 correct: true\n- Clasificación: 2..6 categorías + ítems en >=2 categorías`,
+            connections: ['jl2', 'jtpl']
+          },
+          {
+            id: 'jtpl', x: 490, y: 385, w: 110, h: 82,
+            icon: '🗂️', title: '7. Plantilla Interna', sub: 'EvaluationTemplate', badge: 'MODELO',
+            wires: ['j-l3-tpl', 'j-tpl-pend'],
+            status: 'Persistencia Cloud + Local',
+            file: 'evaluation_templates (Supabase)',
+            simple: 'Una vez superados los 3 filtros, EvaluEdu guarda el tema como una "Plantilla Pedagógica" en la biblioteca del profesor y genera su respaldo imprimible en PDF.',
+            bullets: [
+              'Se guarda en la tabla evaluation_templates de Supabase (y en localStorage como respaldo).',
+              'Conserva el vínculo template_id con todas las actividades derivadas de ese tema.'
+            ],
+            code: `EvaluationTemplate {\n  id, title, subject, objective,\n  competency, status: 'accepted',\n  concepts, situations, processSteps, categories\n}`,
+            connections: ['jl3', 'jpend']
+          },
+          {
+            id: 'jpend', x: 625, y: 218, w: 110, h: 82,
+            icon: '⏳', title: '8. Estado Pending', sub: 'Propuestas Creadas', badge: 'REVISIÓN',
+            wires: ['j-tpl-pend', 'j-pend-rev'],
+            status: 'Bloqueo Previo a Sala',
+            file: 'activities (status: pending)',
+            simple: 'Las actividades recién importadas entran en una bandeja de "Propuestas pendientes". Todavía no pueden usarse en un examen real hasta que el profesor las mire y les dé su visto bueno.',
+            bullets: [
+              'Cada actividad nace con su estructura específica details completa (details.trueFalse, details.singleChoice, etc.).',
+              'Regla de AGENTS.md: no existe un rol de revisor externo; la revisión y aprobación corresponde exclusivamente al docente.'
+            ],
+            code: `Activity {\n  id, type, title, prompt,\n  status: 'pending', // Requiere revisión docente\n  details: { ...estructura tipada v1.2... }\n}`,
+            connections: ['jtpl', 'jrev']
+          },
+          {
+            id: 'jrev', x: 755, y: 78, w: 115, h: 84,
+            icon: '✅', title: '9. Aprobación', sub: 'Revisión Docente', badge: 'APROBADO',
+            wires: ['j-pend-rev', 'j-rev-room'],
+            status: 'Editable con 6 Editores',
+            file: 'TrueFalseEditor..ScenarioEditor',
+            simple: 'El profesor revisa cada propuesta en su propio editor especializado (puede cambiar una palabra, ajustar una pista o agregar una opción) y pulsa "Aprobar".',
+            bullets: [
+              'Cuenta con 6 editores específicos (nunca un formulario genérico).',
+              'Al aprobarse, la actividad pasa a estado aprobado y se sincroniza en la tabla activities de Supabase.'
+            ],
+            code: `// Al aprobar o editar:\nvalidateActivityDetails(activity)\n-> status = 'approved' / 'published'\n-> Sincronizado con tabla "activities"`,
+            connections: ['jpend', 'jroom']
+          },
+          {
+            id: 'jroom', x: 755, y: 385, w: 115, h: 82,
+            icon: '🏫', title: '10. Banco de Sala', sub: 'Lista para Evaluar', badge: 'SALA',
+            wires: ['j-rev-room'],
+            status: 'Disponible en RoomBuilder',
+            file: 'src/App.tsx (RoomBuilder)',
+            simple: '¡Listo! Las actividades aprobadas aparecen como tarjetas enriquecidas en el Creador de Salas para que el profesor marque con un clic cuáles quiere incluir en su evaluación del día.',
+            bullets: [
+              'Permite combinar libremente de 1 a 6 formatos en una misma sala.',
+              'Muestra el icono del formato, el título del contenido, la consigna completa y si es digital interactivo.'
+            ],
+            code: `Banco de Sala:\n[x] Falso/Verdadero · El Ciclo del Agua\n[x] Asociación · Fases y definiciones\n[x] Escenario · Gestión de sequía [📱 Digital]`,
+            connections: ['jrev']
+          }
+        ]
+      },
+      // ==========================================================================
+      // CIRCUITO 4: CONTRATOS MODULARES DE LAS 6 ACTIVIDADES
+      // ==========================================================================
+      contracts: {
+        title: '🧩 Circuito 4: Arquitectura de Contratos de las 6 Actividades (v1.2)',
+        subtitle: 'Ordenadas de la más sencilla a la más compleja: cómo cada contrato separa la solución secreta del docente de la vista pública del estudiante.',
+        wires: [
+          { id: 'c-eng-tf', d: 'M 385 235 L 280 235 L 280 80 L 160 80' },
+          { id: 'c-eng-sc', d: 'M 385 255 L 160 255' },
+          { id: 'c-eng-ma', d: 'M 385 275 L 280 275 L 280 425 L 160 425' },
+          { id: 'c-eng-so', d: 'M 555 235 L 650 235 L 650 80 L 755 80' },
+          { id: 'c-eng-or', d: 'M 555 255 L 755 255' },
+          { id: 'c-eng-sn', d: 'M 555 275 L 650 275 L 650 425 L 755 425' },
+          { id: 'c-eng-pub', d: 'M 470 215 L 470 115' },
+          { id: 'c-eng-eval', d: 'M 470 305 L 470 395' }
+        ],
+        nodes: [
+          {
+            id: 'ceng', type: 'core', x: 385, y: 215, w: 170, h: 90,
+            icon: '⚙️', title: 'MOTOR CENTRAL', sub: 'activityEngine.ts', badge: 'ORQUESTADOR',
+            wires: ['c-eng-tf', 'c-eng-sc', 'c-eng-ma', 'c-eng-so', 'c-eng-or', 'c-eng-sn', 'c-eng-pub', 'c-eng-eval'],
+            status: 'Escalabilidad Preparada (~21 Tipos)',
+            file: 'src/lib/activityEngine.ts',
+            simple: 'Es el director de orquesta de las preguntas. Conecta los 6 contratos actuales y se encarga de que todas las actividades hablen el mismo idioma al guardarse, mostrarse al estudiante y calificarse.',
+            bullets: [
+              'Arquitectura modular pensada para escalar hacia ~21 formatos futuros sin romper los 6 actuales.',
+              'Prohíbe comparar respuestas de un tipo contra otro tipo distinto.',
+              'Distingue con precisión matemática entre: Correcta, Incorrecta, Omitida (en blanco) y Tiempo Agotado (timeout).'
+            ],
+            code: `evaluateActivityResponse(activity, rawResponse, maxScore)\n// Devuelve siempre un contrato uniforme:\n// { status: 'correct'|'incorrect'|'omitted'|'timeout', score, feedback }`,
+            connections: ['ctf', 'csc', 'cma', 'cso', 'cor', 'csn', 'cpub', 'ceval']
+          },
+          {
+            id: 'cpub', x: 390, y: 32, w: 160, h: 82,
+            icon: '🛡️', title: 'Filtro to*Public()', sub: 'Oculta Respuestas', badge: 'SEGURIDAD',
+            wires: ['c-eng-pub'],
+            status: 'Sanitización Activa',
+            file: 'toTrueFalsePublic..toScenarioPublic',
+            simple: 'Es el filtro antitrampas. Antes de enviar las preguntas al celular del estudiante, les quita la respuesta correcta y desordena las columnas, tarjetas o pasos para que nadie pueda espiar la solución.',
+            bullets: [
+              'Elimina los campos correct, recommended, explanation y el orden original.',
+              'Aplica desorden determinista (scrambleRightOptions, scrambleSortingItems, scrambleOrderingSteps).'
+            ],
+            code: `// Lo que sale hacia el navegador del estudiante:\ntoOrderingPublic(def) -> {\n  prompt: def.prompt,\n  steps: scrambleOrderingSteps(def.steps) // Nunca igual a la clave\n}`,
+            connections: ['ceng']
+          },
+          {
+            id: 'ceval', x: 390, y: 395, w: 160, h: 82,
+            icon: '🎯', title: 'Evaluador + Pistas', sub: 'evaluate*() + Hint', badge: 'CALIFICADOR',
+            wires: ['c-eng-eval'],
+            status: 'Sin Nota Pública ni Ranking',
+            file: 'evaluateTrueFalse..evaluateScenario',
+            simple: 'Cuando el estudiante confirma su respuesta, este módulo revisa el intento: al alumno le muestra solo la pista orientadora (para que reflexione sin regalarle la clave) y al profesor le guarda el puntaje exacto y la explicación técnica.',
+            bullets: [
+              'Al confirmar, el estudiante recibe únicamente la pista orientadora (hint).',
+              'Si el tiempo se agota sin confirmar, conserva lo marcado como evidencia pero asigna 0 puntos.',
+              'La explicación privada (explanation) solo se muestra en el panel de Resultados del docente y en el Excel/CSV.'
+            ],
+            code: `Estudiante ve: 💡 Pista orientadora (hint)\nDocente ve en Resultados/CSV:\n  - Puntaje obtenido\n  - Explicación privada (explanation)\n  - Tiempo y eventos`,
+            connections: ['ceng']
+          },
+          {
+            id: 'ctf', x: 40, y: 38, w: 120, h: 84,
+            icon: '1️⃣', title: 'Falso / Verdadero', sub: 'trueFalse.ts', badge: 'NIVEL 1',
+            wires: ['c-eng-tf'],
+            status: '14 Pruebas Aprobadas',
+            file: 'src/lib/activities/trueFalse.ts',
+            simple: 'Actividad 1 (La más directa): Presenta una afirmación clara (con contexto opcional) donde el estudiante debe decidir si es Verdadera o Falsa.',
+            bullets: [
+              'En el editor docente no tiene respuesta marcada por defecto: obliga al profesor a elegir explícitamente Verdadero o Falso.',
+              'Una pregunta dejada en blanco se registra como "Omitida" (nunca se confunde con haber respondido "Falso").'
+            ],
+            code: `TrueFalseDefinition {\n  context?: string,\n  statement: string,\n  correct: boolean, // Obligatorio\n  hint: string,     // Público tras confirmar\n  explanation?: string // Privado docente\n}`,
+            connections: ['ceng']
+          },
+          {
+            id: 'csc', x: 40, y: 213, w: 120, h: 84,
+            icon: '2️⃣', title: 'Selección Múltiple', sub: 'singleChoice.ts', badge: 'NIVEL 2',
+            wires: ['c-eng-sc'],
+            status: '13 Pruebas Aprobadas',
+            file: 'src/lib/activities/singleChoice.ts',
+            simple: 'Actividad 2: Una pregunta con entre 2 y 6 opciones posibles, donde únicamente una opción es la correcta.',
+            bullets: [
+              'Prohíbe opciones duplicadas (normalizando mayúsculas y espacios).',
+              'Exige exactamente una opción con correct: true.',
+              'En el editor manual ninguna opción nace marcada por defecto.'
+            ],
+            code: `SingleChoiceDefinition {\n  prompt: string,\n  options: [{ id, label, correct: boolean }], // 2 a 6\n  hint: string,\n  explanation?: string\n}`,
+            connections: ['ceng']
+          },
+          {
+            id: 'cma', x: 40, y: 383, w: 120, h: 84,
+            icon: '3️⃣', title: 'Asociación Pares', sub: 'matching.ts', badge: 'NIVEL 3',
+            wires: ['c-eng-ma'],
+            status: '12 Pruebas Aprobadas',
+            file: 'src/lib/activities/matching.ts',
+            simple: 'Actividad 3: Un tablero visual con dos columnas. El estudiante toca un concepto a la izquierda (A, B, C...) y toca su pareja a la derecha, uniéndolos con insignias del mismo color.',
+            bullets: [
+              'Entre 2 y 6 pares únicos (relación 1 a 1 estricta, sin repetir definiciones).',
+              'La columna derecha se baraja automáticamente al mostrarse al alumno.',
+              'Incluye botón "×" en cada par para desenlazar y corregir antes de confirmar.'
+            ],
+            code: `MatchingDefinition {\n  prompt: string,\n  pairs: [{ id, left: string, right: string }], // 2 a 6\n  hint: string,\n  explanation?: string\n}`,
+            connections: ['ceng']
+          },
+          {
+            id: 'cso', x: 755, y: 38, w: 125, h: 84,
+            icon: '4️⃣', title: 'Clasificación', sub: 'sorting.ts', badge: 'NIVEL 4',
+            wires: ['c-eng-so'],
+            status: '12 Pruebas Aprobadas',
+            file: 'src/lib/activities/sorting.ts',
+            simple: 'Actividad 4: Un banco de tarjetas desordenadas arriba y de 2 a 6 cajas de categorías abajo. El alumno puede arrastrar cada tarjeta a su caja o simplemente tocar la tarjeta y tocar la caja en su celular.',
+            bullets: [
+              'Entre 2 y 6 categorías y de 2 a 12 elementos.',
+              'Exige que los elementos estén distribuidos en al menos 2 categorías distintas para que exista clasificación real.',
+              'Doble interacción: Drag & Drop en PC y toque directo / selector en móvil.'
+            ],
+            code: `SortingDefinition {\n  prompt: string,\n  categories: string[], // 2 a 6\n  items: [{ id, label, category }], // 2 a 12\n  hint: string\n}`,
+            connections: ['ceng']
+          },
+          {
+            id: 'cor', x: 755, y: 213, w: 125, h: 84,
+            icon: '5️⃣', title: 'Ordenamiento', sub: 'ordering.ts', badge: 'NIVEL 5',
+            wires: ['c-eng-or'],
+            status: '12 Pruebas Aprobadas',
+            file: 'src/lib/activities/ordering.ts',
+            simple: 'Actividad 5: Presenta de 3 a 8 pasos de un proceso desordenados. El estudiante debe ponerlos en la secuencia correcta arrastrando las filas o usando las flechas subir (↑) y bajar (↓).',
+            bullets: [
+              'Algoritmo determinista (scrambleOrderingSteps) que garantiza que los pasos NUNCA aparezcan ya ordenados por casualidad al iniciar.',
+              'Verifica posición por posición contra la secuencia original del docente.'
+            ],
+            code: `OrderingDefinition {\n  prompt: string,\n  steps: string[], // 3 a 8 pasos únicos\n  hint: string,\n  explanation?: string\n}`,
+            connections: ['ceng']
+          },
+          {
+            id: 'csn', x: 755, y: 383, w: 125, h: 84,
+            icon: '6️⃣', title: 'Escenario Decisión', sub: 'scenario.ts', badge: 'NIVEL 6',
+            wires: ['c-eng-sn'],
+            status: '11 Pruebas Aprobadas · Digital',
+            file: 'src/lib/activities/scenario.ts',
+            simple: 'Actividad 6 (La más profunda): Plantea un caso o dilema de la vida real con entre 1 y 4 etapas. En cada etapa el estudiante toma una decisión y ve de inmediato qué consecuencia provoca su elección.',
+            bullets: [
+              'De 1 a 4 etapas secuenciales y de 2 a 4 alternativas por etapa, con exactamente 1 opción recomendada por etapa.',
+              'Exclusivamente digital interactiva: se excluye automáticamente del Examen en Blanco impreso en papel para no arruinar la sorpresa de las etapas.'
+            ],
+            code: `ScenarioDefinition {\n  situation: string,\n  stages: [{\n    id, title, prompt,\n    options: [{ id, text, consequence, feedback, recommended }]\n  }],\n  hint: string\n}`,
+            connections: ['ceng']
+          }
+        ]
+      },
+
+      // ==========================================================================
+      // CIRCUITO 5: FLUJO DE SALAS, ESTUDIANTES E IMPRESIÓN A4
+      // ==========================================================================
+      rooms: {
+        title: '🔄 Circuito 5: Ciclo de Salas en Vivo, Estudiantes y Documentos A4 (HTML/PDF/CSV)',
+        subtitle: 'Cómo funciona una evaluación desde que el profesor crea la sala hasta que el alumno descarga su comprobante y el docente exporta a Excel.',
+        wires: [
+          { id: 'r-cfg-wait', d: 'M 155 110 L 245 110' },
+          { id: 'r-cfg-blank', d: 'M 95 152 L 95 390 L 185 390' },
+          { id: 'r-wait-guest', d: 'M 355 110 L 445 110' },
+          { id: 'r-guest-act', d: 'M 500 152 L 500 215' },
+          { id: 'r-act-sync', d: 'M 555 260 L 655 260' },
+          { id: 'r-sync-rec', d: 'M 710 302 L 710 390' },
+          { id: 'r-sync-csv', d: 'M 765 260 L 820 260 L 820 152' }
+        ],
+        nodes: [
+          {
+            id: 'rcfg', x: 40, y: 68, w: 115, h: 84,
+            icon: '🛠️', title: '1. Creador Sala', sub: '1 a 6 Actividades', badge: 'DOCENTE',
+            wires: ['r-cfg-wait', 'r-cfg-blank'],
+            status: 'Ciclo Limpio Simplificado',
+            file: 'src/App.tsx (RoomBuilder)',
+            simple: 'El profesor configura su sala en segundos: elige el nombre, límite de alumnos, puntaje por pregunta, tiempo opcional y marca en el banco las actividades que desea incluir. El conteo de preguntas se calcula solo.',
+            bullets: [
+              'Sin límite artificial de 3 tipos: permite combinar de 1 a 6 formatos.',
+              'Genera un código único aleatorio (ej. EDU-360).',
+              'Una vez iniciada la sala, su configuración queda bloqueada para garantizar justicia en la prueba.'
+            ],
+            code: `Room {\n  code: "EDU-360",\n  status: "ready" -> "waiting" -> "active" -> "finished",\n  timeLimitMinutes, pointsPerQuestion, shuffleQuestions\n}`,
+            connections: ['rwait', 'rblank']
+          },
+          {
+            id: 'rwait', x: 245, y: 68, w: 110, h: 84,
+            icon: '⏳', title: '2. Sala en Espera', sub: 'Chispa Curiosa', badge: 'WAITING',
+            wires: ['r-cfg-wait', 'r-wait-guest'],
+            status: 'Realtime Activo',
+            file: 'rooms.status = waiting',
+            simple: 'El profesor abre la sala y comparte el código en el pizarrón. Los alumnos van entrando desde sus celulares y ven una pantalla relajante con la mascota Chispa Curiosa dándoles la bienvenida hasta que todos estén listos.',
+            bullets: [
+              'Ningún estudiante puede ver las preguntas mientras la sala está en estado "waiting".',
+              'Cuando el docente pulsa "Iniciar evaluación", la sala pasa a "active" y registra started_at en el servidor.'
+            ],
+            code: `Estado: waiting (Abierta y esperando alumnos)\n-> Docente pulsa [Iniciar Sala]\n-> Estado: active (started_at = Server Timestamp)`,
+            connections: ['rcfg', 'rguest']
+          },
+          {
+            id: 'rguest', x: 445, y: 68, w: 115, h: 84,
+            icon: '🎟️', title: '3. Ingreso Alumno', sub: 'Token Invitado', badge: 'GUEST FN',
+            wires: ['r-wait-guest', 'r-guest-act'],
+            status: 'Edge Function Protegida',
+            file: 'supabase/functions/student-room-guest',
+            simple: 'Cuando el alumno escribe el código de sala y su nombre, el servidor verifica que haya cupo, que no haya rendido antes en esa sala y le entrega un pase temporal seguro sin pedirle correo ni contraseña.',
+            bullets: [
+              'Guarda únicamente el hash del token temporal en base de datos.',
+              'Devuelve solo la estructura pública de las actividades (sin las respuestas correctas).'
+            ],
+            code: `POST /functions/v1/student-room-guest\nBody: { code, studentName }\nReturns: { guestToken, sanitizedActivities, roomState }`,
+            connections: ['rwait', 'ract']
+          },
+          {
+            id: 'ract', type: 'core', x: 385, y: 215, w: 170, h: 90,
+            icon: '📝', title: '4. Evaluación Viva', sub: 'PlayView + Stepper', badge: 'EN CURSO',
+            wires: ['r-guest-act', 'r-act-sync'],
+            status: 'Modo Día y Noche Homologado',
+            file: 'src/App.tsx (PlayView)',
+            simple: 'El estudiante responde las actividades en su pantalla con una barra de progreso superior (Stepper). Al confirmar cada respuesta recibe su pista orientadora. Si recarga la página por error, el reloj sigue exacto.',
+            bullets: [
+              'El cronómetro se calcula desde started_at del servidor: recargar la página no reinicia el tiempo.',
+              'Permite avanzar, volver atrás (si el docente lo habilitó) y omitir preguntas.',
+              'Antes de entregar en la última pregunta, pide confirmación si dejó alguna sin responder.'
+            ],
+            code: `Controles de PlayView:\n- Stepper numerado (1..N)\n- Confirmación por pregunta -> Muestra Pista (Hint)\n- Diálogo anti-entrega accidental al finalizar`,
+            connections: ['rguest', 'rsync']
+          },
+          {
+            id: 'rsync', x: 655, y: 218, w: 110, h: 84,
+            icon: '🔒', title: '5. Cierre y Calificación', sub: 'student-room-sync', badge: 'SERVIDOR',
+            wires: ['r-act-sync', 'r-sync-rec', 'r-sync-csv'],
+            status: '1 Solo Intento por Alumno',
+            file: 'supabase/functions/student-room-sync',
+            simple: 'Al pulsar "Finalizar" (o cuando el reloj llega a cero), las respuestas viajan al servidor. Allí se comparan con las soluciones secretas del profesor y se guarda el intento definitivo.',
+            bullets: [
+              'El servidor no confía en ningún puntaje enviado desde el navegador: recalcula todo en backend.',
+              'Al estudiante se le muestra la pantalla de finalización exitosa sin nota ni ranking competitivo.'
+            ],
+            code: `POST /functions/v1/student-room-sync\n-> Recalcula puntaje en servidor con actividad privada\n-> Guarda en tablas "attempts" y "attempt_answers"`,
+            connections: ['ract', 'rrec', 'rcsv']
+          },
+          {
+            id: 'rblank', x: 185, y: 350, w: 145, h: 84,
+            icon: '🖨️', title: 'Examen en Blanco A4', sub: 'Contingencia Papel', badge: 'DOCENTE PDF',
+            wires: ['r-cfg-blank'],
+            status: 'Iframe A4 (Sin Hojas Blancas)',
+            file: 'ExamDocumentModal (mode="blank")',
+            simple: '¿Se cortó la luz o un alumno no trajo celular? El profesor tiene el botón "Imprimir examen en blanco / PDF", que genera una hoja de examen tradicional lista para imprimir en papel A4 y resolver a lápiz.',
+            bullets: [
+              'Usa inyección en un iframe aislado (printExamDocument) para que nunca salgan hojas en blanco al imprimir.',
+              'Excluye automáticamente los Escenarios de Decisiones por ser interactivos digitales y renumera las demás preguntas.'
+            ],
+            code: `generateExamHtmlDocument({ mode: 'blank' })\n- Excluye type === 'scenario'\n- Renumera 1..N y recalcula puntaje\n- Imprime en A4 o descarga .html autónomo`,
+            connections: ['rcfg']
+          },
+          {
+            id: 'rrec', x: 640, y: 390, w: 145, h: 84,
+            icon: '🧾', title: 'Comprobante Alumno', sub: 'Constancia Oficial', badge: 'ALUMNO PDF',
+            wires: ['r-sync-rec'],
+            status: 'Homologado en PDF / HTML / TXT',
+            file: 'ExamDocumentModal (mode="student")',
+            simple: 'Al terminar su examen, el estudiante puede ver, imprimir en PDF o descargar su Comprobante Oficial de Entrega con la fecha/hora exacta y las respuestas que marcó, como respaldo de que rindió la prueba.',
+            bullets: [
+              'Muestra cada consigna y la respuesta que entregó el alumno (incluyendo sus decisiones de escenario).',
+              'Cumple la regla pedagógica: NO revela cuáles estaban bien o mal ni muestra nota final.'
+            ],
+            code: `Opciones del Estudiante al finalizar:\n1. [📄 Ver e Imprimir Comprobante Oficial (PDF)]\n2. [📥 Descargar Comprobante (.html)]\n3. [Descargar respaldo ligero (.txt)]`,
+            connections: ['rsync']
+          },
+          {
+            id: 'rcsv', x: 755, y: 68, w: 125, h: 84,
+            icon: '📊', title: 'Resultados y Excel', sub: 'Panel Docente + CSV', badge: 'PRIVADO',
+            wires: ['r-sync-csv'],
+            status: 'Filtro por Sala + Buscador',
+            file: 'ResultsView + exportCsv()',
+            simple: 'El profesor (y el administrador) entra a la sección Resultados: puede filtrar por sala, buscar a un alumno por nombre, ver qué respondió en cada actividad y descargar todo en una planilla Excel (CSV).',
+            bullets: [
+              'Incluye selector "Ninguna sala", "Todas las salas" o salas por orden cronológico.',
+              'El archivo evaluedu-resultados-[codigo].csv exporta una fila por cada actividad respondida con tiempos, puntajes, pistas y explicaciones.'
+            ],
+            code: `Archivo descargado:\nevaluedu-resultados-EDU-360.csv\nColumnas: Participante, Sala, Actividad, Tipo,\nEstado, Respuesta, Correcta, Puntaje, Hint, Explicación`,
+            connections: ['rsync']
+          }
+        ]
+      },
+
+      // ==========================================================================
+      // CIRCUITO 6: BASE DE DATOS SUPABASE (9 TABLAS CON RLS)
+      // ==========================================================================
+      database: {
+        title: '🗄️ Circuito 6: Mapa de Base de Datos Supabase (9 Tablas PostgreSQL con RLS)',
+        subtitle: 'Estructura relacional en la nube (sa-east-1): cómo se vinculan usuarios, plantillas, actividades, salas, intentos y auditoría.',
+        wires: [
+          { id: 'd-prof-tpl', d: 'M 155 150 L 265 150 L 265 80 L 370 80' },
+          { id: 'd-prof-act', d: 'M 155 170 L 370 170' },
+          { id: 'd-prof-room', d: 'M 155 190 L 265 190 L 265 270 L 370 270' },
+          { id: 'd-prof-aud', d: 'M 95 220 L 95 415 L 370 415' },
+          { id: 'd-tpl-act', d: 'M 435 120 L 435 135' },
+          { id: 'd-act-ra', d: 'M 505 170 L 650 170' },
+          { id: 'd-room-ra', d: 'M 505 270 L 580 270 L 580 185 L 650 185' },
+          { id: 'd-room-part', d: 'M 505 285 L 650 285' },
+          { id: 'd-part-att', d: 'M 715 325 L 715 365' },
+          { id: 'd-att-ans', d: 'M 650 415 L 555 415' }
+        ],
+        nodes: [
+          {
+            id: 'dprof', type: 'core', x: 35, y: 135, w: 140, h: 86,
+            icon: '🔐', title: '1. profiles', sub: 'Roles Admin / Teacher', badge: 'AUTH RLS',
+            wires: ['d-prof-tpl', 'd-prof-act', 'd-prof-room', 'd-prof-aud'],
+            status: 'Tabla Raíz de Identidad',
+            file: 'public.profiles (FK -> auth.users)',
+            simple: 'Guarda quién es cada usuario registrado y si su cargo es Profesor ("teacher") o Administrador ("admin"). De esta tabla nacen los permisos para todas las demás tablas.',
+            bullets: [
+              'Vinculada directamente con auth.users de Supabase Auth.',
+              'Política de seguridad (secure_profile_onboarding): ningún usuario puede autoasignarse el rol "admin" desde el navegador.'
+            ],
+            code: `TABLE public.profiles (\n  id uuid PRIMARY KEY REFERENCES auth.users,\n  display_name text,\n  role text CHECK (role IN ('teacher', 'admin')),\n  created_at timestamptz\n)`,
+            connections: ['dtpl', 'dact', 'droom', 'daud']
+          },
+          {
+            id: 'dtpl', x: 370, y: 40, w: 135, h: 80,
+            icon: '📋', title: '2. evaluation_templates', sub: 'Plantillas de Contenido', badge: 'RLS OWNER',
+            wires: ['d-prof-tpl', 'd-tpl-act'],
+            status: 'Sincronizada con Constructor/JSON',
+            file: 'public.evaluation_templates',
+            simple: 'Almacena los temas pedagógicos creados o importados por cada profesor (con sus objetivos, conceptos, procesos y categorías).',
+            bullets: [
+              'Guarda el contenido estructurado en una columna JSONB (content).',
+              'Protegida por RLS: cada docente solo lee y edita sus propias plantillas.'
+            ],
+            code: `TABLE public.evaluation_templates (\n  id uuid PRIMARY KEY,\n  owner_id uuid REFERENCES profiles(id),\n  title text, subject text, status text,\n  content jsonb, accepted_at timestamptz\n)`,
+            connections: ['dprof', 'dact']
+          },
+          {
+            id: 'dact', x: 370, y: 135, w: 135, h: 76,
+            icon: '🧩', title: '3. activities', sub: 'Banco 6 Formatos', badge: 'RLS + DETAILS',
+            wires: ['d-prof-act', 'd-tpl-act', 'd-act-ra'],
+            status: 'Guarda details JSONB v1.2',
+            file: 'public.activities',
+            simple: 'Guarda cada pregunta individual del profesor (Falso/Verdadero, Selección, Asociación, Clasificación, Ordenamiento o Escenario) junto con sus claves y pistas.',
+            bullets: [
+              'La columna details (JSONB) conserva la estructura específica del contrato modular.',
+              'Vinculada opcionalmente a su plantilla origen mediante template_id.'
+            ],
+            code: `TABLE public.activities (\n  id uuid PRIMARY KEY,\n  owner_id uuid REFERENCES profiles(id),\n  template_id uuid REFERENCES evaluation_templates(id),\n  type text, prompt text, details jsonb, status text\n)`,
+            connections: ['dprof', 'dtpl', 'dra']
+          },
+          {
+            id: 'droom', x: 370, y: 235, w: 135, h: 80,
+            icon: '🏫', title: '4. rooms', sub: 'Salas de Evaluación', badge: 'REALTIME',
+            wires: ['d-prof-room', 'd-room-ra', 'd-room-part'],
+            status: 'Realtime + Eliminación en Cascada',
+            file: 'public.rooms',
+            simple: 'Guarda cada sala creada por el profesor: su código de acceso, estado actual, tiempo límite, puntaje por pregunta y fechas exactas de inicio y cierre.',
+            bullets: [
+              'Conectada a Supabase Realtime para actualizar el panel docente en vivo.',
+              'Al eliminar una sala desde la app (deleteRoom), limpia en cascada sus relaciones e intentos.'
+            ],
+            code: `TABLE public.rooms (\n  id uuid PRIMARY KEY,\n  owner_id uuid REFERENCES profiles(id),\n  code text UNIQUE, status text,\n  started_at timestamptz, finished_at timestamptz\n)`,
+            connections: ['dprof', 'dra', 'dpart']
+          },
+          {
+            id: 'dra', x: 650, y: 135, w: 135, h: 78,
+            icon: '🔗', title: '5. room_activities', sub: 'Orden de Preguntas', badge: 'RELACIÓN',
+            wires: ['d-act-ra', 'd-room-ra'],
+            status: 'Posición y Puntaje por Sala',
+            file: 'public.room_activities',
+            simple: 'Es la tabla puente que indica qué preguntas exactas pertenecen a cada sala y en qué posición (1, 2, 3...) deben aparecer.',
+            bullets: [
+              'Permite que una misma actividad del banco pueda reutilizarse en diferentes salas sin duplicarla.'
+            ],
+            code: `TABLE public.room_activities (\n  id uuid PRIMARY KEY,\n  room_id uuid REFERENCES rooms(id),\n  activity_id uuid REFERENCES activities(id),\n  position integer, points integer\n)`,
+            connections: ['dact', 'droom']
+          },
+          {
+            id: 'dpart', x: 650, y: 245, w: 135, h: 80,
+            icon: '🙋', title: '6. room_participants', sub: 'Alumnos Invitados', badge: 'TOKEN HASH',
+            wires: ['d-room-part', 'd-part-att'],
+            status: 'Control de Cupo y Sesión Única',
+            file: 'public.room_participants',
+            simple: 'Registra a cada estudiante que entra a una sala con su nombre y el código, asegurando que no se supere el límite de alumnos ni se duplique la misma persona.',
+            bullets: [
+              'Almacena el hash del token temporal de invitado o el vínculo anónimo (auth_user_id).'
+            ],
+            code: `TABLE public.room_participants (\n  id uuid PRIMARY KEY,\n  room_id uuid REFERENCES rooms(id),\n  display_name text,\n  guest_token_hash text, joined_at timestamptz\n)`,
+            connections: ['droom', 'datt']
+          },
+          {
+            id: 'datt', x: 650, y: 365, w: 135, h: 82,
+            icon: '📝', title: '7. attempts', sub: 'Intento y Eventos', badge: '1 POR ALUMNO',
+            wires: ['d-part-att', 'd-att-ans'],
+            status: 'Restricción Única por Participante',
+            file: 'public.attempts',
+            simple: 'Guarda el examen entregado por el estudiante: a qué hora empezó, a qué hora terminó, su puntaje total para el profesor y los eventos de navegación.',
+            bullets: [
+              'La base de datos impide dos intentos del mismo participante en una misma sala.',
+              'La columna events (JSONB) conserva cambios de pregunta, omisiones y tiempos.'
+            ],
+            code: `TABLE public.attempts (\n  id uuid PRIMARY KEY,\n  room_id uuid, participant_id uuid UNIQUE,\n  status text, total_score numeric,\n  events jsonb, submitted_at timestamptz\n)`,
+            connections: ['dpart', 'dans']
+          },
+          {
+            id: 'dans', x: 420, y: 375, w: 135, h: 80,
+            icon: '✅', title: '8. attempt_answers', sub: 'Respuestas por Ítem', badge: 'DETALLE CSV',
+            wires: ['d-att-ans'],
+            status: 'Alimentación de Resultados y CSV',
+            file: 'public.attempt_answers',
+            simple: 'Guarda renglón por renglón lo que el estudiante respondió en cada una de las preguntas del examen, cuánto tiempo tardó y si acertó o falló.',
+            bullets: [
+              'Alimenta la vista detallada de Resultados del docente y cada fila del archivo Excel/CSV descargable.'
+            ],
+            code: `TABLE public.attempt_answers (\n  id uuid PRIMARY KEY,\n  attempt_id uuid REFERENCES attempts(id),\n  activity_id uuid, item_index integer,\n  response jsonb, is_correct boolean, score numeric\n)`,
+            connections: ['datt']
+          },
+          {
+            id: 'daud', x: 220, y: 375, w: 135, h: 80,
+            icon: '🛡️', title: '9. audit_events', sub: 'Bitácora de Seguridad', badge: 'ADMIN AUDIT',
+            wires: ['d-prof-aud'],
+            status: 'Esquema Creado con RLS (En Evolución)',
+            file: 'public.audit_events',
+            simple: 'Es la caja negra de auditoría administrativa preparada para registrar acciones críticas (como invitaciones de usuarios o cambios de permisos).',
+            bullets: [
+              'Tabla creada en Supabase con RLS habilitado.',
+              'Próximo foco registrado en README.md: completar la escritura automática de eventos administrativos en audit_events.'
+            ],
+            code: `TABLE public.audit_events (\n  id uuid PRIMARY KEY,\n  actor_id uuid REFERENCES profiles(id),\n  action text, target_type text,\n  metadata jsonb, created_at timestamptz\n)`,
+            connections: ['dprof']
+          }
+        ]
+      }
+    };
+
+    // ============================================================================
+    // MOTOR INTERACTIVO DEL LIENZO BLUEPRINT
+    // ============================================================================
+    let currentCircuitKey = 'ecosystem';
+    let currentNodeId = 'core';
+    let currentZoom = 1;
+    let tourInterval = null;
+
+    function switchCircuit(circuitKey, targetNodeId = null) {
+      const circuit = ARCHITECTURE_REGISTRY[circuitKey];
+      if (!circuit) return;
+      currentCircuitKey = circuitKey;
+
+      // Actualizar pestañas activas
+      document.querySelectorAll('.circuit-tabs .tab-btn').forEach(btn => btn.classList.remove('active'));
+      const activeTab = document.getElementById('tab-' + circuitKey);
+      if (activeTab) activeTab.classList.add('active');
+
+      // Actualizar títulos del banner
+      document.getElementById('circuit-title').textContent = circuit.title;
+      document.getElementById('circuit-subtitle').textContent = circuit.subtitle;
+
+      // Dibujar cables ortogonales SVG
+      const svg = document.getElementById('wires-svg');
+      svg.innerHTML = circuit.wires.map(w => `
+        <path id="${w.id}" class="wire-base" d="${w.d}" />
+        <path class="wire-pulse" d="${w.d}" />
+      `).join('');
+
+      // Dibujar nodos sobre la cuadrícula
+      const layer = document.getElementById('nodes-layer');
+      layer.innerHTML = circuit.nodes.map(node => {
+        if (node.type === 'bars') {
+          return `
+            <div id="node-${node.id}" class="bp-bar" style="left:${node.x}px; top:${node.y}px; width:${node.w}px; height:${node.h}px;" onclick="selectNode('${node.id}')">
+              <div class="bp-bar-lines">
+                <div class="bp-bar-title"><span>1·2 V/F · Selección</span><span>●</span></div>
+                <div class="bp-bar-decor"></div>
+                <div class="bp-bar-title" style="margin-top:6px;"><span>3·4 Asociar · Clasificar</span><span>●</span></div>
+                <div class="bp-bar-decor" style="width:88%;"></div>
+                <div class="bp-bar-title" style="margin-top:6px;"><span>5·6 Orden · Escenario</span><span>●</span></div>
+                <div class="bp-bar-decor" style="width:65%;"></div>
+              </div>
+            </div>
+          `;
+        }
+
+        const isCore = node.type === 'core';
+        return `
+          <div id="node-${node.id}" class="bp-node ${isCore ? 'core-hub' : ''}" style="left:${node.x}px; top:${node.y}px; width:${node.w}px; height:${node.h}px;" onclick="selectNode('${node.id}')">
+            ${node.badge ? `<span class="bp-node-badge">${node.badge}</span>` : ''}
+            <div class="bp-node-icon">${node.icon}</div>
+            <div>
+              <div class="bp-node-title">${node.title}</div>
+              <div class="bp-node-sub">${node.sub}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Seleccionar el primer nodo o el nodo solicitado
+      const firstId = targetNodeId || circuit.nodes[0].id;
+      selectNode(firstId);
+    }
+
+    function selectNode(nodeId) {
+      const circuit = ARCHITECTURE_REGISTRY[currentCircuitKey];
+      if (!circuit) return;
+      const node = circuit.nodes.find(n => n.id === nodeId);
+      if (!node) return;
+      currentNodeId = nodeId;
+
+      // Marcar nodo activo en el lienzo
+      document.querySelectorAll('.bp-node, .bp-bar').forEach(el => el.classList.remove('selected'));
+      const domNode = document.getElementById('node-' + nodeId);
+      if (domNode) domNode.classList.add('selected');
+
+      // Iluminar cables conectados a este nodo
+      document.querySelectorAll('.wire-base').forEach(w => w.classList.remove('wire-highlight'));
+      if (node.wires) {
+        node.wires.forEach(wId => {
+          const wEl = document.getElementById(wId);
+          if (wEl) wEl.classList.add('wire-highlight');
+        });
+      }
+
+      // Actualizar panel inspector derecho
+      document.getElementById('circuit-step-indicator').textContent = 'Inspeccionando: ' + (node.title || 'Túnel de Contratos');
+      document.getElementById('insp-status').textContent = node.status;
+      document.getElementById('insp-file').textContent = node.file;
+      document.getElementById('insp-title').textContent = (node.icon ? node.icon + ' ' : '🧩 ') + (node.title || '3 Barras de Seguridad: 6 Contratos');
+      document.getElementById('insp-simple').textContent = node.simple;
+
+      const bulletsEl = document.getElementById('insp-bullets');
+      bulletsEl.innerHTML = (node.bullets || []).map(b => `<li>${b}</li>`).join('');
+
+      document.getElementById('insp-code').textContent = node.code || '';
+
+      // Botones para saltar a nodos conectados
+      const connEl = document.getElementById('insp-connections');
+      connEl.innerHTML = (node.connections || []).map(targetId => {
+        const targetObj = circuit.nodes.find(n => n.id === targetId);
+        const label = targetObj ? (targetObj.title || 'Barras Contratos') : targetId;
+        return `<button class="conn-pill" onclick="selectNode('${targetId}')">↪ ${label}</button>`;
+      }).join('');
+    }
+
+    function zoomCanvas(delta) {
+      currentZoom = Math.min(1.25, Math.max(0.7, +(currentZoom + delta).toFixed(2)));
+      const wrapper = document.getElementById('canvas-wrapper');
+      wrapper.style.transform = `scale(${currentZoom})`;
+    }
+
+    function toggleGuidedTour() {
+      const btn = document.getElementById('tour-btn');
+      if (tourInterval) {
+        clearInterval(tourInterval);
+        tourInterval = null;
+        btn.textContent = '▶ Recorrido Guiado';
+        return;
+      }
+      btn.textContent = '⏸ Detener Recorrido';
+      const circuit = ARCHITECTURE_REGISTRY[currentCircuitKey];
+      let idx = circuit.nodes.findIndex(n => n.id === currentNodeId);
+      tourInterval = setInterval(() => {
+        const activeCircuit = ARCHITECTURE_REGISTRY[currentCircuitKey];
+        idx = (idx + 1) % activeCircuit.nodes.length;
+        selectNode(activeCircuit.nodes[idx].id);
+      }, 3200);
+    }
+
+    function handleSearch(query) {
+      const q = query.trim().toLowerCase();
+      if (!q) return;
+      for (const [cKey, cVal] of Object.entries(ARCHITECTURE_REGISTRY)) {
+        const match = cVal.nodes.find(n =>
+          (n.title && n.title.toLowerCase().includes(q)) ||
+          (n.sub && n.sub.toLowerCase().includes(q)) ||
+          (n.file && n.file.toLowerCase().includes(q)) ||
+          (n.simple && n.simple.toLowerCase().includes(q))
+        );
+        if (match) {
+          if (cKey !== currentCircuitKey) {
+            switchCircuit(cKey, match.id);
+          } else {
+            selectNode(match.id);
+          }
+          break;
+        }
+      }
+    }
+
+    // Inicializar en Circuito 1 al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      switchCircuit('ecosystem', 'core');
+    });
+  </script>
+</body>
+</html>

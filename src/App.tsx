@@ -4840,7 +4840,7 @@ function generateExamHtmlDocument({
   <style>
     @page {
       margin: 1.2cm;
-      size: A4 portrait;
+      size: letter portrait;
     }
     * {
       box-sizing: border-box;

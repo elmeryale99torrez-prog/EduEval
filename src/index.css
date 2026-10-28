@@ -4252,7 +4252,7 @@ body.body-modal-locked {
 @media print {
   @page {
     margin: 1.2cm;
-    size: auto;
+    size: letter portrait;
   }
   html, body {
     overflow: visible !important;

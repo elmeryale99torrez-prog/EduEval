@@ -239,14 +239,22 @@ Las salas archivadas conservan resultados y pueden duplicarse.
 - Solicitar solo datos necesarios.
 - Exportaciones privadas, nunca mediante enlaces públicos.
 
-### Próximos focos
+### Próximos focos (Orden de Fases vigente)
 
-1. Registrar eventos administrativos en `audit_events`.
-2. Verificar manualmente la descarga CSV/Excel en dispositivos reales.
-3. Completar la gestión administrativa real de usuarios, permisos y suspensión.
-4. Preparar la configuración definitiva de `Site URL` y Redirect URLs de Supabase para producción.
-5. Preparar una arquitectura para un catálogo futuro de aproximadamente 21 actividades; definir cada formato adicional cuando tenga reglas propias. La etapa v1.2 mantiene únicamente las seis actuales.
-6. Mantener sincronizados el contrato JSON, el validador, la guía de importación y la interfaz.
+Actualmente las **Fases 1 a 4 de la etapa v1.2** (contratos modulares de las 6 actividades, motor central, validador JSON v2, rediseño Día/Noche, creador de salas e impresión en tamaño Carta de Examen en Blanco y Comprobante del Estudiante) están **100 % completadas**. El desarrollo se encuentra situado al inicio de la **Fase 5**:
+
+1. **📍 Fase 5 v1.2 (Fase actual — Nivelación de Servidor Supabase y Concurrencia):**
+   - Actualizar las Edge Functions [`student-room-guest`](supabase/functions/student-room-guest/index.ts) y [`student-room-sync`](supabase/functions/student-room-sync/index.ts) al motor v1.2: retirar `privateActivities` de la respuesta de `join`, validar en servidor que la sala siga `active` y dentro del tiempo antes de aceptar entregas, y calificar con los 6 contratos v1.2.
+   - Implementar guardado transaccional atómico ("todo o nada") e idempotente para `attempts` y `attempt_answers`.
+   - Incorporar límite de peticiones (*Rate Limiting*) en el ingreso público por código de sala e índice compuesto en `attempt_answers`.
+   - Ejecutar pruebas de extremo a extremo y de concurrencia (40–50 estudiantes simultáneos en una sala).
+2. **Fase 6 (Panel Administrativo y Auditoría Inmutable):**
+   - Registrar eventos administrativos en `audit_events` asegurando su inmutabilidad mediante políticas RLS (prohibir `DELETE` y `UPDATE`).
+   - Completar la gestión administrativa real de usuarios, permisos y suspensión/reactivación.
+   - Configurar definitivamente `Site URL` y Redirect URLs en Supabase Auth y verificar descargas CSV/PDF en dispositivos Android físicos.
+3. **Fase 7 (Expansión v1.3+ a 21 Actividades y Alistamiento Pre-Comercial):**
+   - Incorporar progresivamente los 15 formatos futuros definidos en [docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md](docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md) manteniendo sincronizados el contrato JSON, el validador y la interfaz.
+   - Alistamiento comercial: Política de Privacidad estudiantil, Términos de Servicio, política de retención de datos y verificación de copias de seguridad (*Backups*).
 
 El formulario manual se conserva como alternativa de respaldo; el flujo JSON validado es el camino principal para preparar contenido nuevo.
 
@@ -279,3 +287,16 @@ Se crearon desde la interfaz dos salas de auditoría, `EDU-360` y `EDU-322`, con
 Ambas salas están finalizadas en Supabase y conservan sus evidencias. Su archivado fue rechazado por el control automático de aprobación y queda pendiente de autorización específica; no se borró nada. Las pruebas modificaron únicamente los datos y estados de esas salas mediante la app, además de respaldos locales de la propia aplicación. No se publicaron cambios de código ni se modificaron contratos, motor, validador, skill, funciones o políticas.
 
 El diagnóstico está listo como base de mejoras, no como certificación de publicación. Desconexión real, dispositivo limpio/Android físico, concurrencia, suite/build y casos completos de `details` siguen como puertas de aceptación explícitas.
+
+## Mapa Arquitectónico Interactivo (HTML)
+
+El diagrama interactivo completo de la arquitectura de EvaluEdu v1.2 se encuentra en [docs/arquitectura-interactiva-evaluedu.html](docs/arquitectura-interactiva-evaluedu.html). Puede abrirse directamente en cualquier navegador y documenta en 6 circuitos interactivos (con explicaciones sencillas y técnicas):
+1. El ecosistema global y las conexiones con Supabase, GitHub Pages PWA e IA externa desacoplada.
+2. Los programas e instalaciones requeridos (`Node.js LTS v24.22.1`, `npm 11.19.1`, `MinGit v2.56.0.3`, `React 19`, `TypeScript 6`, `Vite 8`, `Vitest 5`, `.env.local`).
+3. La tubería del sistema JSON (`edueval.content` v1 y v2) y sus 3 niveles de validación.
+4. Los 6 contratos modulares de actividades (`src/lib/activities/*.ts`) y su separación entre definición privada y proyección pública.
+5. El ciclo de vida de salas en vivo, tokens temporales de estudiantes e impresión en tamaño Carta en `iframe` aislado (PDF/HTML/CSV).
+6. El mapa relacional de las 9 tablas PostgreSQL con RLS en Supabase.
+
+> **Mantenimiento vivo:** Cada vez que se modifique la aplicación, debe actualizarse el bloque `ARCHITECTURE_REGISTRY` de `docs/arquitectura-interactiva-evaluedu.html` junto con `BITACORA.md` y `README.md`.
+

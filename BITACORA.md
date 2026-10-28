@@ -848,4 +848,66 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
   - Compilación de producción con Vite (`tsc -b && vite build`): **Exitosa (código 0)**.
 
 
+### Mapa Arquitectónico Interactivo Blueprint en HTML (`docs/arquitectura-interactiva-evaluedu.html`) — 2026-10-26
+
+- **Estado:** Implementado en `docs/arquitectura-interactiva-evaluedu.html` como documento autónomo (Zero-Dependencies) para abrir directamente en cualquier navegador.
+- **Diseño y alcance:**
+  - Lienzo de ingeniería tipo *Blueprint* sobre cuadrícula oscura con nodos iluminados y tuberías ortogonales a 90° con pulsos de datos animados.
+  - **6 Circuitos Interactivos:**
+    1. *Ecosistema Global y Conexiones Externas* (Roles, IA externa desacoplada, Contrato JSON, Validador, Núcleo EvaluEdu v1.2, 6 Contratos Modulares en barras paralelas, Supabase PostgreSQL + RLS, Edge Functions, Realtime + Cola Offline, GitHub Actions CI/CD + GitHub Pages PWA y Salida PDF/CSV).
+    2. *Programas Instalados y Herramientas de Desarrollo* (Node.js LTS v24.22.1, npm 11.19.1, MinGit v2.56.0.3, `.env.local`, GitHub Actions, React 19.2.8 + Vite 8.3.0, TypeScript 6.0.2, Vitest 5.0.3 con 91/91 pruebas y Build `dist/` + Service Worker v12).
+    3. *Tubería del Sistema JSON (`edueval.content` v1 y v2)* (10 pasos desde el tema del docente y el Prompt Oficial hasta los 3 filtros de validación, `EvaluationTemplate`, estado `pending`, aprobación docente y banco de sala).
+    4. *Contratos de las 6 Actividades (`src/lib/activities/*.ts`)* (Motor central `activityEngine.ts`, filtro antitrampas `to*Public()`, evaluador determinista `evaluate*()` con pistas `hint` y los 6 módulos ordenados de fácil a difícil).
+    5. *Flujo de Salas, Alumnos y Documentos A4 (`iframe`)* (Ciclo de sala, ingreso invitado `student-room-guest`, `PlayView` con Stepper, `student-room-sync`, Examen en Blanco A4 sin escenarios, Comprobante Oficial del alumno y exportación CSV/Excel).
+    6. *Base de Datos Supabase (9 Tablas PostgreSQL con RLS)* (`profiles`, `evaluation_templates`, `activities`, `rooms`, `room_activities`, `room_participants`, `attempts`, `attempt_answers` y `audit_events`).
+  - **Doble nivel explicativo en cada nodo:** incluye una explicación en lenguaje sencillo (*"En palabras sencillas para cualquier persona"*) y la ficha técnica profunda (*archivos, reglas, código/contrato real y enlaces rápidos a nodos conectados*), además de buscador en tiempo real y botón de **`▶ Recorrido Guiado`**.
+  - **Regla de mantenimiento continuo:** El objeto central `ARCHITECTURE_REGISTRY` dentro de `docs/arquitectura-interactiva-evaluedu.html` debe actualizarse junto con `BITACORA.md` y `README.md` cada vez que se realicen nuevas modificaciones en la aplicación.
+
+
+### Análisis comparativo de H5P/Lumi y consolidación del catálogo de 21 actividades — 2026-10-28
+
+- **Estado:** Análisis pedagógico y arquitectónico completado; registrado formalmente en `docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md`.
+- **Alcance y decisiones:**
+  - Se contrastó el catálogo de más de 45 tipos de contenido de **Lumi / H5P** frente a la identidad y requerimientos de **EduEval**.
+  - Se constató que más del 70% de la oferta de H5P corresponde a contenedores expositivos (libros, acordeones, diapositivas) o juegos arcade (memorice, sopa de letras), sin rigor evaluativo formativo ni viabilidad táctil móvil.
+  - Se confirmó que los formatos evaluativos viables de Lumi no reemplazan ni aumentan el horizonte de actividades: **se complementan y encajan con precisión 1 a 1 en los 15 cupos futuros** que completan el catálogo maestro de 21 actividades ($6 \text{ actuales} + 15 \text{ futuras}$).
+  - Se estructuraron las 15 actividades futuras en 4 familias pedagógicas:
+    1. *Comprensión lectora y análisis textual* (Completar espacios, Marcar palabras clave, Arrastrar/tocar fichas al texto, Reordenar párrafos y Respuesta corta conceptual).
+    2. *Razonamiento y matrices* (Selección múltiple ponderada, Matriz/Doble entrada, Construcción de resumen y Detección de error en cadena).
+    3. *Evaluación visual y procedimental* (Puntos calientes en diagramas, Selección de esquemas y Secuenciación visual de fases).
+    4. *Pensamiento crítico y autoevaluación* (Pregunta de desarrollo con retroalimentación formativa, Tarjetas de recuperación activa y Portafolio reflexivo estructurado).
+  - Se fijaron los **5 filtros de admisión** para su futuro desarrollo (a partir de v1.3+): derivación desde `edueval.content`, ergonomía móvil táctil, evaluación formativa protegida con pistas (*hints*), respaldo imprimible en papel (A4) y arquitectura modular aislada con sanitización pública antitrampas (`to*Public`).
+- **Verificación técnica:** Sin alteraciones en el código fuente de v1.2; el núcleo de 6 actividades base permanece estable con 91/91 pruebas aprobadas.
+
+
+### Revisión de análisis arquitectónico externo e integración en el Orden Maestro de Fases — 2026-10-28
+
+- **Estado:** Análisis documental completado y registrado; sin modificaciones en el código fuente (`src/` y `supabase/` intactos).
+- **Diagnóstico sobre el informe externo (`ANALISIS_ARQUITECTONICO_EVALUEDU.md`):**
+  - Se verificó que dicho informe fue generado a partir de la lectura exclusiva del mapa interactivo [`docs/arquitectura-interactiva-evaluedu.html`](docs/arquitectura-interactiva-evaluedu.html) sin acceso al código real de React/TypeScript ni a las migraciones de Supabase.
+  - **Descartado por no aplicar o ya estar resuelto:** virtualización de `.bp-node`, carga diferida de `ARCHITECTURE_REGISTRY` (rompería la apertura local sin servidor del documento HTML), supuesta inyección SQL en `handleSearch` (línea 1808 del visor HTML, que filtra en memoria), librerías de servidores Node/Express en disco local (`pino` en `/var/log/app.log`, `app.use(csrf())`) y caché Redis externo prematuro. Asimismo, los índices de claves foráneas (`index_foreign_keys`), las políticas RLS de propietario en las 9 tablas y el recálculo de puntajes en servidor ya están implementados.
+  - **Aportes técnicos rescatados e integrados en nuestra hoja de ruta:**
+    1. *Transacción atómica ("todo o nada") e idempotencia al guardar intentos:* asegurar mediante función SQL transaccional (`RPC`) o recuperación idempotente que `attempts` y `attempt_answers` se guarden juntos sin dejar intentos huérfanos ante cortes de red.
+    2. *Refuerzo de validación en Edge Functions estudiantiles (`student-room-guest` y `student-room-sync`):* eliminar `privateActivities` de la respuesta de `join`, verificar en servidor que la sala continúe en estado `active` y que no haya vencido el plazo antes de aceptar la entrega, y nivelar la calificación del servidor con los 6 contratos modulares v1.2.
+    3. *Límite de frecuencia de peticiones (`Rate Limiting`) e índice compuesto:* proteger el ingreso público por código de sala frente a fuerza bruta o saturación y añadir el índice compuesto en `attempt_answers(attempt_id, question_index)`.
+    4. *Inmutabilidad en `audit_events`:* al activar el registro de eventos administrativos, asegurar mediante política RLS que las filas de auditoría no admitan `DELETE` ni `UPDATE`.
+    5. *Pruebas de concurrencia (40–50 estudiantes simultáneos) y flujo E2E:* comprobar el desempeño de una sala completa entregando al mismo instante.
+    6. *Alistamiento pre-comercial (Fase futura):* Términos de Servicio, Política de Privacidad estudiantil, política de retención de datos y verificación de restauración de copias de seguridad (`Backups`).
+- **Orden Maestro de Fases vigente y punto actual del desarrollo:**
+  - **Fase 1 v1.2 (Completada):** Auditoría y creación de los 6 contratos modulares independientes (`trueFalse`, `singleChoice`, `matching`, `sorting`, `ordering`, `scenario`).
+  - **Fase 2 v1.2 (Completada):** Integración en el motor central (`activityEngine.ts`), editores docentes, vistas de estudiante con pistas (`hint`) y sanitización pública (`to*Public()`).
+  - **Fase 3 v1.2 (Completada):** Validador de contenido JSON v2 (`contentImport.ts`), niveles de validación pedagógica y generación de propuestas con `details` completos.
+  - **Fase 4 v1.2 (Completada):** Rediseño *Warm Modernist* (Modo Día/Noche, mascota *Chispa Curiosa*, escala móvil +15 %), Creador de Salas directo (1 a 6 formatos), documentos A4 en `iframe` aislado (Examen en Blanco sin escenarios y Comprobante Oficial del Estudiante), mapa interactivo HTML y propuesta del catálogo de 21 actividades.
+  - **📍 Fase 5 v1.2 (FASE ACTUAL — Próxima a ejecutar):** Nivelación del servidor Supabase (`student-room-guest` y `student-room-sync` al motor v1.2, eliminación de `privateActivities` en `join`, bloqueo de entregas con sala cerrada), guardado atómico de `attempts` + `attempt_answers`, *Rate Limiting* en ingreso por código, índice compuesto y pruebas de extremo a extremo / concurrencia (40–50 alumnos).
+  - **Fase 6 (Siguiente):** Cierre del Panel Administrativo y Auditoría Real (escritura automática en `audit_events` con regla de inmutabilidad, suspensión/activación real de usuarios y verificación en Android físico).
+  - **Fase 7 (Versión v1.3+ y Comercialización):** Expansión progresiva a los 15 formatos adicionales del catálogo de 21 actividades ([`docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md`](docs/PROPUESTA_CATALOGO_21_ACTIVIDADES.md)) y paquete legal/operativo pre-comercial (Privacidad, SLA y Backups).
+
+
+### Configuración de tamaño de impresión Carta (`letter portrait`) — 2026-10-28
+
+- **Estado:** Implementado en `src/App.tsx` y `src/index.css`.
+- **Alcance:**
+  - Se configuró la directiva `@page { margin: 1.2cm; size: letter portrait; }` en el generador de documentos aislados (`generateExamHtmlDocument` en `src/App.tsx`) y en la regla de impresión global `@media print` en `src/index.css`.
+  - Aplica a todas las descargas/impresiones de documentos pedagógicos (Examen en blanco del aula, Comprobante Oficial del estudiante y plantilla impresa). Las exportaciones a Excel/CSV se mantienen en su formato tabular estándar de datos sin verse afectadas por esta regla.
+
 
