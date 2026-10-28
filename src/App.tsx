@@ -5218,6 +5218,41 @@ function generateExamHtmlDocument({
       text-align: center;
       line-height: 1.5;
     }
+    @media (max-width: 600px) {
+      body {
+        padding: 10px 8px;
+      }
+      .doc-container {
+        padding: 16px 12px;
+        border-radius: 8px;
+      }
+      .field-row {
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .field-label {
+        min-width: auto;
+      }
+      .exam-title {
+        font-size: 18px;
+      }
+      .doc-actions {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .btn-action {
+        flex: 1;
+        min-width: 130px;
+        justify-content: center;
+        text-align: center;
+        padding: 8px 12px;
+        font-size: 12px;
+      }
+      .q-top {
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+    }
     @media print {
       body {
         padding: 0 !important;
