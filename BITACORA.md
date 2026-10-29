@@ -916,4 +916,35 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
   4. *Las 6 actividades evaluadas en Infinix:* Falso/Verdadero, Selección Única, Asociación (apilada en 2 bloques), Clasificación (arrastrar o tocar + desplegables accesibles), Ordenamiento (botones ↑/↓ táctiles) y Escenario de decisiones (etapa contextual) funcionaron sin desbordes horizontales ni fallas de scroll.
 
 
+### Prueba autónoma completa en móvil Infinix (Docente/Admin) y concurrencia de estudiantes — 2026-10-28
+
+- **Estado:** Implementado, verificado en vivo en dispositivo físico **Infinix X6850** y probado concurrentemente con 6 estudiantes conectados a Supabase.
+- **Flujo de prueba realizado:**
+  1. *Creación de sala desde el celular:* Desde la app en el Infinix en rol Docente se abrió `+ Nueva sala`, se seleccionó el tema "Salud Ambiental, Agua y Nutrición" (12 actividades preparadas en los 6 formatos) y se configuró la sala con código real `EDU-588` sincronizada en Supabase con estado `waiting`.
+  2. *Ingreso concurrente de estudiantes:*
+     - 1 estudiante interactivo en navegador de computadora (*Carlos Mendoza*).
+     - 5 estudiantes concurrentes autenticados mediante la Edge Function `student-room-guest`: *Ana Gómez*, *Lucía Ramos*, *Pedro Silva*, *Valeria Vargas* y *Mateo Fernández*.
+  3. *Inicio en tiempo real:* Al presionar `▶ Iniciar evaluación` en el celular, el canal Realtime de Supabase activó simultáneamente las pantallas estudiantiles pasando de la sala de espera a la primera actividad.
+  4. *Respuestas y calificaciones:* Los 6 estudiantes enviaron sus intentos con perfiles variados (100% de aciertos, calificaciones intermedias, omisiones y tiempos reales), generando estadísticas pedagógicas reales en el panel docente (79% participación, 21% precisión general, 120/720 puntos acumulados).
+  5. *Cierre de evaluación:* El docente finalizó la sala `EDU-588` desde el Infinix y supervisó los resultados generales e individuales.
+- **Detalles ergonómicos y de diseño identificados y optimizados:**
+  1. *Bloqueo de scroll de fondo y fondo desenfocado (Backdrop):*
+     - Al abrir el menú de navegación (`☰ Navegación`), el fondo ahora tiene desenfoque esmerilado elegante (`rgba(10, 18, 24, 0.72)` + `backdrop-filter: blur(4px)`).
+     - Se aplicó bloqueo estricto a nivel `html` y `body` (`overflow: hidden !important; height: 100% !important; touch-action: none; overscroll-behavior: none;`) impidiendo cualquier fuga de scroll sobre el contenido de fondo mientras el cajón está abierto. Al pulsar fuera se cierra automáticamente y restaura el scroll con suavidad.
+  2. *Colapso visual de nombre y correo en Directorio de Usuarios (`AdminUsersView`):*
+     - En el directorio de administración, el nombre y el correo electrónico se renderizaban en la misma línea sin espacio (`Elmer Yaletorrezelmeryaletorrez@gmail.com`).
+     - Se añadió formato de bloque explícito a nivel celda (`.results-table-wrap td b { display: block; }` y `.results-table-wrap td small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }`), mostrando el nombre en negrita y el correo debajo en tono atenuado.
+  3. *Explosión de altura de filas y vacíos negros en `AdminRoomsView`:*
+     - En la tabla de salas globales, la columna de actividades concatenaba hasta 20 títulos largos provocando que filas individuales midieran hasta 2,394 px de alto, empujando los datos hacia abajo por alineación vertical y dejando un vacío negro de más de 800 px.
+     - Se implementó `vertical-align: top` en todas las celdas de tabla y la clase `.room-activities-cell` que trunca títulos largos mostrando los primeros 2 y un contador resumen (`+N más`) con texto completo en el atributo `title`.
+  4. *Legibilidad e indicador de scroll horizontal en tablas móviles (`ResultsView`, `AdminRoomsView`, `AdminUsersView`):*
+     - En pantallas de 450 px, las tablas de 6 a 7 columnas (`Estado`, `Acción`, `Resultado`, `Tiempo`) quedaban parcialmente cortadas sin una pista visual evidente de desplazamiento.
+     - Se incorporó la barra de ayuda táctil `<span className="table-scroll-hint">↔ Desliza la tabla horizontalmente para ver todos los datos</span>` sobre cada tabla, con contraste armónico tanto en tema claro como en tema oscuro.
+  5. *Conmutación fluida entre roles (Docente ↔ Administración) dentro de la PWA móvil:*
+     - Anteriormente, el menú de paneles abría ventanas externas (`target="_blank"`) sacando al usuario de la aplicación PWA instalada en Android.
+     - Se integró el botón directo `🎓 Ir a Panel Docente` / `⚙ Ir a Administración` en el propio menú lateral móvil (`.sidebar-footer`) y se transformó el menú `↗ Paneles` en botones de conmutación interna instantánea que no abandonan la app.
+- **Verificación técnica:** Vitest 91/91 pruebas pasadas (`npm run test`), compilación limpia sin errores de tipos (`npm run build`) y validación visual completada con capturas en el celular físico.
+
+
+
 
