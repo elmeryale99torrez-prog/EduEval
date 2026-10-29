@@ -970,9 +970,11 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
      - Se movió `<section className="panel friendly-tip-panel friendly-tip-welcome">` para posicionarse inmediatamente debajo de `<PageIntro>` (`Buenas noches, [Nombre]` y `＋ Nuevo contenido`), funcionando como un cálido saludo pedagógico de bienvenida antes de las métricas numéricas.
   5. *Nivelación milimétrica y proporciones de botones transversales:*
      - En `.template-card-actions`, se configuró una cuadrícula limpia de dos columnas donde `＋ Agregar actividad` y `✎ Editar plantilla` ocupan la primera fila (50% cada uno), y el botón `🗑 Eliminar` cubre el ancho completo de ambos juntos abajo (`grid-column: 1 / -1; width: 100%`), eliminando los espacios vacíos antiestéticos.
-     - En `.primary-button` y `.outline-button`: se unificó `min-height: 44px`, `box-sizing: border-box !important`, `border: 1.5px solid transparent` en primarios (para emparejar exactamente los 1.5px del borde outline) y `line-height: 1 !important`, corrigiendo desalineamientos de altura entre botones emparejados.
+     - En `.primary-button` y `.outline-button`: se unificó `min-height: 44px`, `box-sizing: border-box !important`, `border: 1.5px solid transparent` en primarios (para emparejar exactamente los 1.5px del borde outline) y `line-height: 1 !important`.
+     - **Corrección de desalineamiento vertical en cabecera:** Se identificó y corrigió la regla heredada en móvil `.page-intro .primary-button { margin-top: 18px }`, la cual empujaba hacia abajo únicamente al botón primario (`＋ Nueva sala` / `＋ Nueva plantilla`) mientras dejaba al botón outline (`⚙ Ajustes del examen` / `📄 Importar JSON`) arriba con margen cero. Se neutralizó el margen con `margin: 0 !important; margin-top: 0 !important; height: 44px !important;` en ambos botones en `.room-create-actions` y `.content-actions`.
+     - **Corrección de desbordamiento de «Crear sala con seleccionadas» en barra de propuestas:** En pantallas móviles, al disponer dos botones anchos en horizontal dentro de `.proposal-bottom-actions`, el botón de crear sala sobrepasaba el ancho de la tarjeta y se cortaba. Se implementó disposición en columna vertical (`grid-template-columns: 1fr; width: 100%`) con orden prioritario y `white-space: normal`, asegurando que el botón cubra todo el ancho sin recortarse ni salirse de la pantalla.
      - En `.btn-small`: altura unificada `min-height: 38px !important` y `padding: 8px 14px !important`.
-- **Verificación técnica:** 95/95 pruebas Vitest aprobadas (`npm run test`), compilación de producción exitosa (`npm run build`) en 994ms.
+- **Verificación técnica:** 95/95 pruebas Vitest aprobadas (`npm run test`), compilación de producción exitosa (`npm run build`) en 974ms.
 
 
 
