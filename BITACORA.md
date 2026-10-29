@@ -975,6 +975,7 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
      - **Corrección de desbordamiento de «Crear sala con seleccionadas» en barra de propuestas:** En pantallas móviles, al disponer dos botones anchos en horizontal dentro de `.proposal-bottom-actions`, el botón de crear sala sobrepasaba el ancho de la tarjeta y se cortaba. Se implementó disposición en columna vertical (`grid-template-columns: 1fr; width: 100%`) con orden prioritario y `white-space: normal`, asegurando que el botón cubra todo el ancho sin recortarse ni salirse de la pantalla.
      - En `.btn-small`: altura unificada `min-height: 38px !important` y `padding: 8px 14px !important`.
 - **Verificación técnica:** 95/95 pruebas Vitest aprobadas (`npm run test`), compilación de producción exitosa (`npm run build`) en 974ms.
+- **Despliegue público verificado:** Se publicó la rama `main` en GitHub (`git push origin main`, commit `4a9d18d`). El workflow de GitHub Actions completó el despliegue a GitHub Pages en `https://elmeryale99torrez-prog.github.io/EvaluEdu/` verificando los bundles de producción activos (`index-DWFXXwtn.js` e `index-kcoaHOsk.css`).
 
 
 
