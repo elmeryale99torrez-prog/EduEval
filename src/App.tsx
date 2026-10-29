@@ -205,7 +205,21 @@ function cloudActivityToLocal(row: CloudActivityRow): Activity {
 }
 
 function mergeCloudItems<T extends { id: string }>(current: T[], incoming: T[]): T[] {
-  return [...incoming, ...current.filter((item) => !isCloudId(item.id))]
+  const currentMap = new Map(current.map((item) => [item.id, item]))
+  const merged = incoming.map((inc) => {
+    const local = currentMap.get(inc.id)
+    if (local && typeof local === 'object' && 'status' in local && typeof inc === 'object' && 'status' in inc) {
+      const localStatus = (local as { status: unknown }).status
+      const incStatus = (inc as { status: unknown }).status
+      // Si el docente ya aprobó la actividad en este dispositivo y la respuesta remota aún dice 'pending',
+      // mantener 'published' para que no revierta su estado ante latencia de red.
+      if (localStatus === 'published' && incStatus === 'pending') {
+        return { ...inc, status: 'published' }
+      }
+    }
+    return inc
+  })
+  return [...merged, ...current.filter((item) => !isCloudId(item.id))]
 }
 
 function cloudRoomToLocal(row: CloudRoomRow, relationRows: CloudRoomActivityRow[] = []): Room {
@@ -551,7 +565,7 @@ function App() {
     }
     void loadCloudContent()
     return () => { mounted = false }
-  }, [authSession, authProfile, view])
+  }, [authSession, authProfile])
 
   const loadAdminSnapshot = async (showError = true) => {
     if (!supabase || !authSession || !authProfile || authSession.user.is_anonymous || !canAccessPanel(authProfile, 'admin')) {
@@ -855,7 +869,17 @@ function App() {
     }
     const cloudActivities = (activityRows as CloudActivityRow[]).map(cloudActivityToLocal)
     const cloudByKey = new Map(cloudActivities.map((activity) => [activity.type + '|' + activity.title, activity]))
-    setActivities((current) => current.map((item) => generated.some((local) => local.id === item.id) ? cloudByKey.get(item.type + '|' + item.title) ?? item : item))
+    setActivities((current) => current.map((item) => {
+      const isFromThisTemplate = generated.some((local) => local.id === item.id)
+      if (!isFromThisTemplate) return item
+      const cloud = cloudByKey.get(item.type + '|' + item.title)
+      if (!cloud) return item
+      const currentStatus = item.status
+      if (currentStatus !== cloud.status && supabase && authProfile) {
+        void supabase.from('activities').update({ status: currentStatus }).eq('id', cloud.id).eq('owner_id', authProfile.id)
+      }
+      return { ...cloud, status: currentStatus }
+    }))
     notify('Plantilla y actividades sincronizadas con Supabase.')
     markSynced()
     return true
@@ -1073,9 +1097,16 @@ function App() {
     setActivities((current) => current.map((item) => idSet.has(item.id) ? { ...item, status } : item))
     if (supabase && authProfile) {
       const client = supabase
-      ids.filter(isCloudId).forEach((id) => {
-        void client.from('activities').update({ status }).eq('id', id).eq('owner_id', authProfile.id)
-      })
+      const cloudIds = ids.filter(isCloudId)
+      if (cloudIds.length > 0) {
+        void client.from('activities').update({ status }).in('id', cloudIds).eq('owner_id', authProfile.id).then(({ error }) => {
+          if (error) {
+            cloudIds.forEach((id) => queueSync('activity_status', { id, status }, 'El estado se actualizó localmente; quedó pendiente de sincronización.'))
+          } else {
+            markSynced()
+          }
+        })
+      }
     }
     notify(status === 'published' ? `${ids.length} propuesta${ids.length === 1 ? '' : 's'} aprobada${ids.length === 1 ? '' : 's'} y publicada${ids.length === 1 ? '' : 's'}.` : `${ids.length} propuesta${ids.length === 1 ? '' : 's'} devuelta${ids.length === 1 ? '' : 's'} a borradores.`)
   }
@@ -1084,6 +1115,18 @@ function App() {
     if (!activityIds.length) return
     const idSet = new Set(activityIds)
     setActivities((current) => current.map((act) => idSet.has(act.id) && act.status === 'pending' ? { ...act, status: 'published' as const } : act))
+    if (supabase && authProfile) {
+      const cloudIds = activityIds.filter(isCloudId)
+      if (cloudIds.length > 0) {
+        void supabase.from('activities').update({ status: 'published' }).in('id', cloudIds).eq('owner_id', authProfile.id).then(({ error }) => {
+          if (error) {
+            cloudIds.forEach((id) => queueSync('activity_status', { id, status: 'published' }, 'Estado publicado pendiente de sincronización.'))
+          } else {
+            markSynced()
+          }
+        })
+      }
+    }
     setPreselectedRoomActivityIds(activityIds)
     show('rooms')
     notify(`Se preparó la sala con ${activityIds.length} actividad${activityIds.length === 1 ? '' : 'es'}. Configura los ajustes de la evaluación.`)
@@ -1484,12 +1527,28 @@ function App() {
   ) : <div className="app-shell">
     <header className="topbar">
       <button className="brand" onClick={() => show('overview')} aria-label="Ir al inicio"><span className="brand-mark mascot-mark"><IconSparkMascot size={22} /></span><span><strong>EvaluEdu</strong><small>aprendizaje activo</small></span></button>
-       <div className="topbar-actions"><span className={`connection-pill ${!isOnline ? 'offline' : 'ready'}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{!isOnline ? 'Sin conexión' : backendReady ? 'En línea' : 'Modo local'}</span>{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
+      <div className="topbar-actions">
+        {role === 'student' && authSession && (
+          <a
+            href={panelUrl(authProfile?.roles.includes('teacher') ? 'teacher' : 'admin')}
+            className="return-to-panel-link"
+            onClick={(e) => {
+              if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                e.preventDefault()
+                changeRole(authProfile?.roles.includes('teacher') ? 'teacher' : 'admin')
+              }
+            }}
+            title="Volver a tu panel principal (clic derecho para abrir en nueva pestaña)"
+          >
+            <span className="return-arrow">↩</span> Volver a {authProfile?.roles.includes('teacher') ? 'Panel Docente' : 'Administración'}
+          </a>
+        )}
+        <span className={`connection-pill ${!isOnline ? 'offline' : 'ready'}`} title={lastSyncedAt ? `Última sincronización: ${formatDate(lastSyncedAt)}` : undefined}><i />{!isOnline ? 'Sin conexión' : backendReady ? 'En línea' : 'Modo local'}</span>{installPrompt && <button className="install-button" type="button" onClick={() => void installApp()}>＋ Instalar app</button>}<button className="theme-toggle-btn" type="button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Cambiar a modo noche' : 'Cambiar a modo día'} title={theme === 'light' ? 'Modo día activo (pulsa para activar modo noche)' : 'Modo noche activo (pulsa para activar modo día)'}><span className="theme-toggle-icon">{theme === 'light' ? <IconSun size={19} /> : <IconMoon size={19} />}</span></button></div>
     </header>
     {role !== 'student' && mobileNavOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavOpen(false)} onTouchMove={(event) => event.preventDefault()} />}
     <div className="layout">
-      {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}{canAccessPanel(authProfile, role === 'admin' ? 'teacher' : 'admin') && <button type="button" className="sidebar-account-button role-switch-button" onClick={() => { setMobileNavOpen(false); changeRole(role === 'admin' ? 'teacher' : 'admin') }}><span>{role === 'admin' ? '🎓' : '⚙'}</span>{role === 'admin' ? 'Ir a Panel Docente' : 'Ir a Administración'}</button>}{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu · v1.2</small></div></aside>}
-      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button><details className="panel-window-menu"><summary>↗ Paneles</summary><div>{canAccessPanel(authProfile, 'teacher') && (role === 'teacher' ? <span className="panel-menu-current">✓ Docente (activo)</span> : <button type="button" className="panel-menu-btn" onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); changeRole('teacher') }}>Docente</button>)}<button type="button" className="panel-menu-btn" onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); changeRole('student') }}>Estudiante</button>{canAccessPanel(authProfile, 'admin') && (role === 'admin' ? <span className="panel-menu-current">✓ Administración (activo)</span> : <button type="button" className="panel-menu-btn" onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); changeRole('admin') }}>Administración</button>)}</div></details></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} activities={activities} studentResponses={studentResponses} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} activities={activities} studentResponses={studentResponses} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} responsesRecorded={studentResponses} onGoToQuestion={goToStudentQuestion} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
+      {role !== 'student' && <aside className={`sidebar${mobileNavOpen ? ' mobile-open' : ''}`}><div className="role-label"><span className="role-icon">{role === 'admin' ? <IconAdmin size={18} /> : <IconTeacher size={18} />}</span><div><b>{role === 'admin' ? 'Administración' : 'Panel docente'}</b><small title={authSession?.user.email ?? undefined}>{authSession?.user.email ?? (role === 'admin' ? 'Sesión administrativa' : 'Sesión docente')}</small></div></div><nav>{role === 'admin' ? <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Resumen general" onClick={() => show('overview')} /><NavButton active={panelView === 'adminUsers'} icon={<IconUsers size={18} />} label="Usuarios" onClick={() => show('adminUsers')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas globales" onClick={() => show('rooms')} /><NavButton active={panelView === 'adminAudit'} icon={<IconAudit size={18} />} label="Auditoría" onClick={() => show('adminAudit')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></> : <><NavButton active={panelView === 'overview'} icon={<IconHome size={18} />} label="Inicio" onClick={() => show('overview')} /><NavButton active={panelView === 'content'} icon={<IconContent size={18} />} label="Contenido" onClick={() => show('content')} /><NavButton active={panelView === 'proposals'} icon={<IconProposals size={18} />} label="Propuestas" badge={pending.length} onClick={() => show('proposals')} /><NavButton active={panelView === 'rooms'} icon={<IconRooms size={18} />} label="Salas" onClick={() => show('rooms')} /><NavButton active={panelView === 'results'} icon={<IconResults size={18} />} label="Resultados" onClick={() => show('results')} /></>}</nav><div className="sidebar-footer"><button type="button" className="help-card" onClick={() => { setMobileNavOpen(false); setShowHelpModal(true) }}><span><IconHelp size={16} /></span><p><b>¿Necesitas ayuda?</b><br />Ver la guía rápida de EvaluEdu.</p></button>{role === 'teacher' && <button type="button" className="sidebar-feedback-button" onClick={() => { setMobileNavOpen(false); setShowFeedbackModal(true) }}><span>✎</span>Escribir sugerencia</button>}<div className="sidebar-role-switches" aria-label="Cambio de panel">{canAccessPanel(authProfile, role === 'admin' ? 'teacher' : 'admin') && <a href={panelUrl(role === 'admin' ? 'teacher' : 'admin')} className="sidebar-account-button role-switch-link" onClick={(e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) { e.preventDefault(); setMobileNavOpen(false); changeRole(role === 'admin' ? 'teacher' : 'admin') } }} title={`Cambiar a ${role === 'admin' ? 'Panel Docente' : 'Administración'} (clic derecho para abrir en nueva pestaña)`}><span>{role === 'admin' ? '🎓' : '⚙'}</span>{role === 'admin' ? 'Ir a Panel Docente' : 'Ir a Administración'}</a>}<a href={panelUrl('student')} className="sidebar-account-button role-switch-link student-mode-link" onClick={(e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) { e.preventDefault(); setMobileNavOpen(false); changeRole('student') } }} title="Probar tus salas como estudiante (clic derecho para abrir en nueva pestaña)"><span>📱</span>Probar como Estudiante</a></div>{authSession && <div className="sidebar-account-actions" aria-label="Opciones de cuenta">{!authSession.user.is_anonymous && <button type="button" className="sidebar-account-button" onClick={() => { setMobileNavOpen(false); setShowPasswordChange(true) }}><span>🔑</span>Cambiar contraseña</button>}<button type="button" className="sidebar-account-button danger" onClick={() => { setMobileNavOpen(false); void signOut() }}><span>↪</span>Cerrar sesión</button></div>}<small>EvaluEdu · v1.2</small></div></aside>}
+      <main className="main-content">{role !== 'student' && <div className="panel-toolbar"><button className="mobile-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((current) => !current)}>{mobileNavOpen ? '×' : '☰'} <span>Navegación</span></button></div>}{role === 'student' && panelView !== 'play' ? studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} activities={activities} studentResponses={studentResponses} onLeave={leaveStudentSession} /> : <StudentView room={studentRoom} roomCode={roomCode} setRoomCode={setRoomCode} studentName={studentName} setStudentName={setStudentName} onStart={joinRoom} onRefresh={refreshStudentRoom} onLeave={leaveStudentSession} isTester={Boolean(authSession)} /> : role === 'admin' && panelView === 'overview' ? <AdminDashboard activities={activities} rooms={rooms} templates={templates} attempts={displayedAttempts} adminData={adminSnapshot} onNavigate={show} /> : role === 'admin' && panelView === 'adminUsers' ? <AdminUsersView attempts={displayedAttempts} profile={authProfile} adminData={adminSnapshot} onRefresh={() => loadAdminSnapshot(false)} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'adminAudit' ? <AdminAuditView attempts={displayedAttempts} rooms={rooms} adminData={adminSnapshot} onHome={() => show('overview')} /> : role === 'admin' && panelView === 'rooms' ? <AdminRoomsView rooms={rooms} activities={activities} adminData={adminSnapshot} onHome={() => show('overview')} /> : panelView === 'overview' ? <Overview activities={published} rooms={rooms} pending={pending} templates={templates} attempts={displayedAttempts} onNavigate={show} onSelect={setSelectedActivity} firstName={firstName} todayLabel={todayLabel} /> : panelView === 'content' ? <ContentView templates={templates} activities={activities} onCreateTemplate={createTemplate} onUpdateTemplate={updateTemplate} onDeleteTemplate={deleteTemplate} onCreate={createActivity} onImport={importContent} onSelect={setSelectedActivity} onCreateRoom={(activityIds) => { setPreselectedRoomActivityIds(activityIds); show('rooms') }} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'proposals' ? <ProposalsView activities={pending} hasDraft={hasTemplateDraft} onReview={reviewActivity} onReviewBatch={reviewBatch} onEditActivity={(act) => setEditingActivity(act)} onCreateRoomFromProposals={createRoomFromProposals} onContinueDraft={() => show('content')} onHome={() => show('overview')} /> : panelView === 'rooms' ? <RoomsView rooms={rooms} activities={activities} templates={templates} initialActivityIds={preselectedRoomActivityIds} onClearInitialActivities={() => setPreselectedRoomActivityIds(null)} onCreate={createRoom} onTransition={transitionRoom} onDuplicate={duplicateRoom} onShare={shareRoomCode} onDelete={(room) => void deleteRoom(room)} onNavigateToContent={() => show('content')} onNavigateToProposals={() => show('proposals')} onHome={() => show('overview')} /> : panelView === 'results' ? <ResultsView attempts={displayedAttempts} rooms={resultRooms} templates={templates} activities={activities} onExport={exportCsv} onDeleteAttempt={deleteAttempt} onClearAttempts={clearAttempts} onHome={() => show('overview')} /> : studentFinished ? <StudentCompletion room={studentRoom} attempt={lastStudentAttempt} activities={activities} studentResponses={studentResponses} onLeave={leaveStudentSession} /> : <PlayView activity={playActivity} index={playIndex} totalCount={studentActivities.length || 6} allowBack={studentRoom?.allowBack ?? true} timeLimit={studentRoom?.time ?? null} startedAt={studentRoom?.startedAt} savedResponse={studentResponses[playIndex]} responsesRecorded={studentResponses} onGoToQuestion={goToStudentQuestion} submitted={submitted} onSubmit={submitAnswer} onSkip={skipStudentQuestion} onPrevious={previousStudentQuestion} onTimeExpired={() => finishStudentAttempt('timeout')} onNext={nextStudentQuestion} />}</main>
     </div>{toast && <div className="toast" role="status">✓ {toast}</div>}
     {showPasswordChange && authSession && <ChangePasswordModal onClose={() => setShowPasswordChange(false)} onSaved={() => { setShowPasswordChange(false); notify('Contraseña actualizada correctamente.') }} />}
     {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
@@ -2141,6 +2200,25 @@ function Overview({
         }
       />
 
+      <section className="panel friendly-tip-panel friendly-tip-welcome">
+        <div className="friendly-tip-head">
+          <div className="friendly-tip-badge-wrap">
+            <span className="friendly-tip-spark-anim">
+              <IconSparkMascot size={28} />
+            </span>
+            <div>
+              <p className="eyebrow friendly-eyebrow">CONSEJO DEL DÍA</p>
+              <h3 className="friendly-tip-title">Pistas para tu clase</h3>
+            </div>
+          </div>
+        </div>
+        <div className="friendly-tip-bubble">
+          <span className="friendly-quote-open" aria-hidden="true">“</span>
+          <p className="friendly-tip-text">{PEDAGOGICAL_TIPS[tipIndex]}</p>
+          <span className="friendly-quote-close" aria-hidden="true">”</span>
+        </div>
+      </section>
+
       <section className="metric-grid">
         <Metric
           icon="◈"
@@ -2165,7 +2243,7 @@ function Overview({
         />
       </section>
 
-      <div className="dashboard-grid">
+      <div className="dashboard-grid dashboard-grid-overview">
         <section className="panel activity-panel">
           <div className="panel-heading">
             <div>
@@ -2220,25 +2298,6 @@ function Overview({
               </button>
             </div>
           )}
-        </section>
-
-        <section className="panel friendly-tip-panel">
-          <div className="friendly-tip-head">
-            <div className="friendly-tip-badge-wrap">
-              <span className="friendly-tip-spark-anim">
-                <IconSparkMascot size={28} />
-              </span>
-              <div>
-                <p className="eyebrow friendly-eyebrow">CONSEJO DEL DÍA</p>
-                <h3 className="friendly-tip-title">Pistas para tu clase</h3>
-              </div>
-            </div>
-          </div>
-          <div className="friendly-tip-bubble">
-            <span className="friendly-quote-open" aria-hidden="true">“</span>
-            <p className="friendly-tip-text">{PEDAGOGICAL_TIPS[tipIndex]}</p>
-            <span className="friendly-quote-close" aria-hidden="true">”</span>
-          </div>
         </section>
       </div>
 
@@ -6453,7 +6512,7 @@ function sameAttemptIdentity(left: StudentAttempt, right: StudentAttempt): boole
 function hasStudentAttempt(roomId: string, name: string): boolean { return readStorage<string[]>('edueval-attempts', []).includes(studentAttemptKey(roomId, name)) }
 function shuffleItems<T>(items: T[]): T[] { const result = [...items]; for (let index = result.length - 1; index > 0; index -= 1) { const target = Math.floor(Math.random() * (index + 1)); [result[index], result[target]] = [result[target], result[index]] } return result }
 
-function StudentView({ room, roomCode, setRoomCode, studentName, setStudentName, onStart, onRefresh, onLeave }: { room: Room | null; roomCode: string; setRoomCode: (value: string) => void; studentName: string; setStudentName: (value: string) => void; onStart: () => void; onRefresh: () => void; onLeave: () => void }) {
+function StudentView({ room, roomCode, setRoomCode, studentName, setStudentName, onStart, onRefresh, onLeave, isTester = false }: { room: Room | null; roomCode: string; setRoomCode: (value: string) => void; studentName: string; setStudentName: (value: string) => void; onStart: () => void; onRefresh: () => void; onLeave: () => void; isTester?: boolean }) {
   if (room?.status === 'waiting') {
     return (
       <div className="student-entry">
@@ -6495,6 +6554,12 @@ function StudentView({ room, roomCode, setRoomCode, studentName, setStudentName,
       <p className="eyebrow">ENTRADA DE ESTUDIANTES</p>
       <h1>Aprende haciendo.</h1>
       <p>Entra a una sala con el código de tu docente.</p>
+      {isTester && (
+        <div className="student-tester-notice" role="note">
+          <span>💡</span>
+          <p><b>Modo de prueba para docentes:</b> Ingresa a cualquiera de tus salas para experimentar la evaluación como un estudiante. Puedes regresar a tu panel con el botón de la cabecera.</p>
+        </div>
+      )}
       <div className="entry-card">
         <label>
           Nombre completo

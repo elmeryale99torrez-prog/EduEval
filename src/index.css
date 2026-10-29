@@ -247,12 +247,20 @@ button{cursor:pointer;border:0;color:inherit}
   color:var(--muted)!important;
 }
 .primary-button{
+  box-sizing:border-box!important;
+  border:1.5px solid transparent!important;
   background:var(--accent-warm)!important;
   color:#ffffff!important;
   border-radius:var(--radius-pill)!important;
   box-shadow:0 4px 14px rgba(248,164,82,.32)!important;
   font-weight:700!important;
-  padding:11px 22px!important;
+  padding:10px 20px!important;
+  min-height:44px!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  line-height:1!important;
+  vertical-align:middle!important;
   transition:all .15s ease!important;
 }
 .primary-button:hover:not(:disabled){
@@ -264,11 +272,19 @@ button{cursor:pointer;border:0;color:inherit}
   box-shadow:none!important;
 }
 .outline-button{
+  box-sizing:border-box!important;
   background:var(--paper)!important;
   border:1.5px solid var(--line)!important;
   color:var(--ink)!important;
   border-radius:var(--radius-pill)!important;
   font-weight:600!important;
+  padding:10px 20px!important;
+  min-height:44px!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  line-height:1!important;
+  vertical-align:middle!important;
   transition:all .15s ease!important;
 }
 .outline-button:hover{
@@ -3033,10 +3049,23 @@ html,body{max-width:100%;overflow-x:hidden}
 }
 
 .template-card-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
+  width: 100%;
+  margin-top: 14px;
+}
+
+.template-card-actions button {
+  width: 100%;
+  text-align: center;
+  justify-content: center;
+}
+
+.template-card-actions .danger-text-button,
+.template-card-actions button:last-child {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
 .draft-notice-actions {
@@ -4468,5 +4497,181 @@ body.body-modal-locked {
   background: #243038;
   color: #94a3b8;
 }
+
+/* ========================================================
+   ENLACE DISCRETO DE RETORNO AL PANEL DESDE ESTUDIANTE
+   ======================================================== */
+.return-to-panel-link {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  background: #eef7f2 !important;
+  color: #1a6248 !important;
+  border: 1.5px solid #bce1ce !important;
+  border-radius: var(--radius-pill, 9999px) !important;
+  padding: 8px 16px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  min-height: 38px !important;
+  box-sizing: border-box !important;
+}
+
+.return-to-panel-link:hover {
+  background: #1b6a50 !important;
+  color: #ffffff !important;
+  border-color: #1b6a50 !important;
+  box-shadow: 0 4px 12px rgba(27, 106, 80, 0.25) !important;
+}
+
+.return-to-panel-link .return-arrow {
+  font-size: 14px;
+  line-height: 1;
+}
+
+[data-theme="dark"] .return-to-panel-link {
+  background: #15271e !important;
+  color: #6ee7b7 !important;
+  border-color: #2b5641 !important;
+}
+
+[data-theme="dark"] .return-to-panel-link:hover {
+  background: #2b5641 !important;
+  color: #ffffff !important;
+}
+
+/* ========================================================
+   ENLACES SEMÁNTICOS DE ROLES EN MENÚ LATERAL (CLIC DERECHO PC)
+   ======================================================== */
+.sidebar-role-switches {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line, #edf1ed);
+}
+
+.role-switch-link {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 10px 12px !important;
+  border-radius: 10px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+  color: var(--ink, #183329) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  transition: all 0.15s ease !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+}
+
+.role-switch-link:hover {
+  background: #f4f7f4 !important;
+  border-color: #dce6dc !important;
+}
+
+.role-switch-link.student-mode-link {
+  color: #1b6a50 !important;
+  background: rgba(46, 118, 89, 0.08) !important;
+  border-color: rgba(46, 118, 89, 0.22) !important;
+}
+
+.role-switch-link.student-mode-link:hover {
+  background: rgba(46, 118, 89, 0.16) !important;
+  border-color: rgba(46, 118, 89, 0.4) !important;
+}
+
+[data-theme="dark"] .sidebar-role-switches {
+  border-color: #1e262c;
+}
+
+[data-theme="dark"] .role-switch-link {
+  color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .role-switch-link:hover {
+  background: #18222a !important;
+  border-color: #222e38 !important;
+}
+
+[data-theme="dark"] .role-switch-link.student-mode-link {
+  color: #6ee7b7 !important;
+  background: rgba(52, 211, 153, 0.12) !important;
+  border-color: rgba(52, 211, 153, 0.3) !important;
+}
+
+/* ========================================================
+   AVISO DE MODO DE PRUEBA EN VISTA ESTUDIANTE
+   ======================================================== */
+.student-tester-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #edf8ef;
+  border: 1.5px solid #bce3c9;
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin: 0 auto 18px auto;
+  max-width: 440px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #1b5b42;
+  text-align: left;
+}
+
+.student-tester-notice span {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.student-tester-notice p {
+  margin: 0;
+}
+
+[data-theme="dark"] .student-tester-notice {
+  background: #13271d;
+  border-color: #24523a;
+  color: #a7f3d0;
+}
+
+/* ========================================================
+   CONSEJO DEL DÍA COMO BIENVENIDA DEBAJO DE PAGEINTRO
+   ======================================================== */
+.friendly-tip-welcome {
+  margin-bottom: 26px !important;
+  width: 100% !important;
+}
+
+.dashboard-grid-overview {
+  grid-template-columns: 1fr !important;
+}
+
+/* ========================================================
+   NIVELACIÓN MILIMÉTRICA DE ACCIONES Y BOTONES EMPAREJADOS
+   ======================================================== */
+.proposal-bottom-actions,
+.room-create-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.proposal-bottom-actions .primary-button,
+.proposal-bottom-actions .outline-button,
+.room-create-actions .primary-button,
+.room-create-actions .outline-button {
+  min-height: 44px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+}
+
 
 

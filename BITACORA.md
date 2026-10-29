@@ -945,6 +945,36 @@ Pendiente: revisar las decisiones concretas de contrato/puntaje/confirmación de
      - Se integró el botón directo `🎓 Ir a Panel Docente` / `⚙ Ir a Administración` en el propio menú lateral móvil (`.sidebar-footer`) y se transformó el menú `↗ Paneles` en botones de conmutación interna instantánea que no abandonan la app.
 - **Verificación técnica:** Vitest 91/91 pruebas pasadas (`npm run test`), compilación limpia sin errores de tipos (`npm run build`) y validación visual completada con capturas en el celular físico.
 
+### Optimización estética integral, conmutación lateral con clic derecho nativo y corrección de persistencia de propuestas aprobadas - 2026-10-28
+
+- **Estado:** Implementado y verificado con 95/95 pruebas Vitest y compilación Vite de producción exitosa.
+- **Cambios realizados:**
+  1. *Corrección crítica de persistencia en propuestas importadas (`Aprobar todas` / `reviewBatch`):*
+     - **Causa raíz diagnosticada:** Al importar un JSON, las actividades se crean en memoria con IDs temporales mientras `persistCloudTemplate` las inserta en Supabase en segundo plano. Cuando el usuario pulsaba "Aprobar todas", `reviewBatch` filtraba solo `isCloudId`, ignorando las actividades que aún estaban sincronizándose. Además, `persistCloudTemplate` al concluir el insert sobreescribía la lista local con los datos de Supabase (que tenían `status: 'pending'`), y el `useEffect` de carga de datos dependía de `[authSession, authProfile, view]`, por lo que al cambiar de pestaña (`view`) se recargaba Supabase inmediatamente y `mergeCloudItems` sobreescribía las actividades locales regresándolas a propuesta.
+     - **Solución implementada:**
+       - Actualización en lote atómica en Supabase con `.in('id', cloudIds)` y encolado automático de sincronización en caso de fallo de red.
+       - En `persistCloudTemplate`, si el docente ya cambió el estado a `published` localmente durante la sincronización, se preserva el estado local y se propaga de inmediato el update a Supabase.
+       - En `mergeCloudItems`, se protegió la combinación contra regresiones: si una actividad local ya fue aprobada (`published`) y la nube aún reporta `pending` por retraso de respuesta, se conserva `published`.
+       - Se retiró `view` de las dependencias de `loadCloudContent`, evitando recargas masivas innecesarias de toda la base remota cada vez que el docente conmuta de pantalla en su panel.
+       - Se añadió suite de pruebas automatizadas en `src/lib/proposalPersistence.test.ts` (4 pruebas nuevas).
+  2. *Eliminación total del botón superior `↗ Paneles` y traslado al menú lateral (`.sidebar`):*
+     - Se retiró `.panel-window-menu` de la barra superior.
+     - Se crearon enlaces semánticos `<a>` con `href={panelUrl(...)}` en `.sidebar-footer`:
+       - Para cuentas híbridas (*Admin + Docente*): enlace al otro panel (`🎓 Ir a Panel Docente` / `⚙ Ir a Administración`) y enlace `📱 Probar como Estudiante`.
+       - Para cuentas de *solo Docente*: enlace directo `📱 Probar como Estudiante`.
+     - **Soporte nativo de PC:** Al ser enlaces semánticos con `href`, en navegadores de escritorio admiten nativamente **clic derecho → "Abrir enlace en una pestaña nueva"** o Ctrl+Clic, y con clic simple ejecutan la conmutación interna instantánea en la SPA sin recargar la página.
+  3. *Modo Estudiante para Docente y Admin con retorno discreto:*
+     - Al entrar a modo estudiante teniendo una sesión activa, en la cabecera superior (`header.topbar`) se muestra un botón discreto: `[ ↩ Volver a Panel Docente ]` (o a Administración).
+     - En `StudentView`, se añadió un aviso sutil (`.student-tester-notice`) que orienta al docente indicando que está en modo de prueba para sus salas.
+  4. *Reubicación del "Consejo del día" en Inicio (`Overview`):*
+     - Se movió `<section className="panel friendly-tip-panel friendly-tip-welcome">` para posicionarse inmediatamente debajo de `<PageIntro>` (`Buenas noches, [Nombre]` y `＋ Nuevo contenido`), funcionando como un cálido saludo pedagógico de bienvenida antes de las métricas numéricas.
+  5. *Nivelación milimétrica y proporciones de botones transversales:*
+     - En `.template-card-actions`, se configuró una cuadrícula limpia de dos columnas donde `＋ Agregar actividad` y `✎ Editar plantilla` ocupan la primera fila (50% cada uno), y el botón `🗑 Eliminar` cubre el ancho completo de ambos juntos abajo (`grid-column: 1 / -1; width: 100%`), eliminando los espacios vacíos antiestéticos.
+     - En `.primary-button` y `.outline-button`: se unificó `min-height: 44px`, `box-sizing: border-box !important`, `border: 1.5px solid transparent` en primarios (para emparejar exactamente los 1.5px del borde outline) y `line-height: 1 !important`, corrigiendo desalineamientos de altura entre botones emparejados.
+     - En `.btn-small`: altura unificada `min-height: 38px !important` y `padding: 8px 14px !important`.
+- **Verificación técnica:** 95/95 pruebas Vitest aprobadas (`npm run test`), compilación de producción exitosa (`npm run build`) en 994ms.
+
+
 
 
 
